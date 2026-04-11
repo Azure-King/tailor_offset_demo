@@ -1,3 +1,0 @@
-[submodule "third_party/tailor"]
-	path = third_party/tailor
-	url = https://github.com/Azure-King/tailor
