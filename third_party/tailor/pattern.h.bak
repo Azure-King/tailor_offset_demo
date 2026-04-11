@@ -1,0 +1,1148 @@
+﻿#pragma once
+#include "tailor_concept.h"
+#include <assert.h>
+#include <array>
+#include <vector>
+#include <ranges>
+
+TAILOR_NAMESPACE_BEGIN
+
+struct EdgeFillStatus {
+	Int wind = 0;	 // 边(下方)的环绕数
+	Size positive = 0; // 正方向边的数量
+	Size negitive = 0; // 负方向边的数量
+};
+
+struct EdgeGroupFillStatus {
+	EdgeFillStatus subject;
+	EdgeFillStatus clipper;
+};
+
+enum class BoundaryType :short {
+	Unknown = 0b0000,			// 未知
+
+	UpperBoundary = 0b0001,     // 上边界
+	LowerBoundary = 0b0010,	    // 下边界
+	ConjugateBoundary = UpperBoundary | LowerBoundary,	// 共轭边界, 同时表示上下边界, 仅特殊情况使用
+
+	Inside = 0b0100,			// 内部
+	Outside = 0b1000,			// 外部
+
+	InsideConjugateBoundary = Inside | ConjugateBoundary,	// 内部共轭边界
+	OutsideConjugateBoundary = Outside | ConjugateBoundary,	// 外部共轭边界
+};
+
+namespace {
+	inline bool IsBoundary(BoundaryType type) {
+		return type == BoundaryType::UpperBoundary
+			|| type == BoundaryType::LowerBoundary;
+	}
+	inline bool IsBoundaryX(BoundaryType type) {
+		return type == BoundaryType::UpperBoundary
+			|| type == BoundaryType::LowerBoundary
+			|| type == BoundaryType::InsideConjugateBoundary
+			|| type == BoundaryType::OutsideConjugateBoundary;
+		//return (static_cast<int>(type) & 0b0011) != 0;
+	}
+	constexpr BoundaryType RemoveUpperBoundary(BoundaryType type) {
+		return static_cast<BoundaryType>(static_cast<int>(type) &
+			static_cast<int>(BoundaryType::LowerBoundary));
+	}
+
+	constexpr BoundaryType RemoveLowerBoundary(BoundaryType type) {
+		return static_cast<BoundaryType>(static_cast<int>(type) &
+			static_cast<int>(BoundaryType::UpperBoundary));
+	}
+
+	constexpr bool HasLowerBoundary(BoundaryType type) {
+		return (static_cast<int>(type) & static_cast<int>(BoundaryType::LowerBoundary)) != 0;
+	}
+	constexpr bool HasUpperBoundary(BoundaryType type) {
+		return (static_cast<int>(type) & static_cast<int>(BoundaryType::UpperBoundary)) != 0;
+	}
+
+	inline BoundaryType ReverseBoundary(BoundaryType type) {
+		assert(IsBoundary(type));
+		return (type == BoundaryType::UpperBoundary) ?
+			BoundaryType::LowerBoundary :
+			BoundaryType::UpperBoundary;
+	}
+	constexpr bool IsContainBoundary(BoundaryType a, BoundaryType b) {
+
+		auto av = static_cast<short>(a);
+		auto bv = static_cast<short>(b);
+		auto cv = static_cast<short>(a) & static_cast<short>(b);
+		return (static_cast<short>(a) & static_cast<short>(b)) == static_cast<short>(b);
+	}
+}
+
+// 等于指定环绕数
+template<Int wind>
+class EqSpecifiedWindCondition {
+public:
+	constexpr bool operator()(Int w) const {
+		static_assert(wind != 0, "Zero winding number = outside the polygon.");
+		return w == wind;
+	}
+};
+
+// 不等于指定环绕数
+template<Int wind>
+class NeqSpecifiedWindCondition {
+public:
+	constexpr bool operator()(Int w) const {
+		return w != wind && w != 0;
+	}
+};
+
+// 大于等于指定环绕数
+template<Int wind>
+class GeqSpecifiedWindCondition {
+public:
+	constexpr bool operator()(Int w) const {
+		return w != 0 && w >= wind;
+	}
+};
+
+// 小于等于指定环绕数
+template<Int wind>
+class LeqSpecifiedWindCondition {
+public:
+	constexpr bool operator()(Int w) const {
+		return w != 0 && w <= wind;
+	}
+};
+
+// 小于指定环绕数
+template<Int wind>
+class LtSpecifiedWindCondition {
+public:
+	constexpr bool operator()(Int w) const {
+		return w != 0 && w < wind;
+	}
+};
+
+// 大于指定环绕数
+template<Int wind>
+class GtSpecifiedWindCondition {
+public:
+	constexpr bool operator()(Int w) const {
+		return w != 0 && w > wind;
+	}
+};
+
+// 奇偶条件
+class EvenOddCondition {
+public:
+	constexpr bool operator()(Int wind) const {
+		return wind % 2 != 0;
+	}
+};
+
+// 非零条件
+class NonZeroCondition {
+public:
+	constexpr bool operator()(Int wind) const {
+		return wind != 0;
+	}
+};
+
+// 永假条件
+class UnsatisfiableCondition {
+public:
+	constexpr bool operator()(Int wind) const {
+		return false;
+	}
+};
+
+// 正
+// Condition = bool(Int); 返回值表示是否在多边形内部, Func(0) 必须为 false
+template<class Condition>
+class ConditionFillType {
+public:
+	template<class... Args>
+	ConditionFillType(Args&&... args) :condition(std::forward<Args>(args)...) {
+		// condition(0) 必须为 false, tailor 规定外部环绕从 0 开始
+		assert(!condition(0));
+	}
+
+	BoundaryType operator()(const EdgeFillStatus& status) const {
+		auto x = static_cast<Int>(status.positive) - static_cast<Int>(status.negitive);
+
+		bool succ0 = condition(status.wind);
+		bool succ1 = condition(status.wind + x);
+
+		if (succ0 && succ1) {
+			//  w+x 内
+			//<----->
+			//   w  内
+			return BoundaryType::Inside;
+		} else if (succ0) {
+			//  w+x 外
+			//<-----
+			//   w  内
+			return BoundaryType::UpperBoundary;
+		} else if (succ1) {
+			//  w+x 内
+			// ----->
+			//   w  外
+			return BoundaryType::LowerBoundary;
+		} else {
+			//  w+x 外
+			//<----->
+			//   w  外
+			return BoundaryType::Outside;
+		}
+	}
+private:
+	[[no_unique_address]]
+	Condition condition;
+};
+
+// 支持共轭边界的版本
+template<class Condition>
+class ConditionFillType2 {
+public:
+	template<class... Args>
+	ConditionFillType2(Args&&... args) :condition(std::forward<Args>(args)...) {
+		// condition(0) 必须为 false, tailor 规定外部环绕从 0 开始
+		assert(!condition(0));
+	}
+
+	BoundaryType operator()(const EdgeFillStatus& status) const {
+		auto x = static_cast<Int>(status.positive) - static_cast<Int>(status.negitive);
+		bool succ0 = condition(status.wind);
+		bool succ1 = condition(status.wind + x);
+
+		if (succ0 && succ1) {
+			bool conjugate =
+				status.positive + status.negitive != 0 &&     // 该边属于该组
+				(status.positive + status.negitive) % 2 == 0; // 该边成对出现
+
+			//  w+x 内
+			//<----->
+			//   w  内
+			return conjugate ? BoundaryType::InsideConjugateBoundary : BoundaryType::Inside;
+		} else if (succ0) {
+			//  w+x 外
+			//<-----
+			//   w  内
+			return BoundaryType::UpperBoundary;
+		} else if (succ1) {
+			//  w+x 内
+			// ----->
+			//   w  外
+			return BoundaryType::LowerBoundary;
+		} else {
+			bool conjugate =
+				status.positive + status.negitive != 0 &&
+				(status.positive + status.negitive) % 2 == 0;
+
+			//  w+x 外
+			//<----->
+			//   w  外
+			return conjugate ? BoundaryType::OutsideConjugateBoundary : BoundaryType::Outside;
+		}
+	}
+private:
+	[[no_unique_address]]
+	Condition condition;
+};
+
+using EvenOddFillType = ConditionFillType2<EvenOddCondition>;
+using NonZeroFillType = ConditionFillType2<NonZeroCondition>;
+using IgnoreFillType = ConditionFillType2<UnsatisfiableCondition>;
+
+struct PolyEdgeInfo {
+	Handle id = npos;
+	BoundaryType type = BoundaryType::Unknown; // 上边界或下边界, 但如果是上边界, 则该边需要反转
+};
+
+template<class Edge>
+struct Polygon {
+	std::vector<Edge> edges;
+};
+
+template<class Edge>
+struct PolyTree {
+	using PolygonType = Polygon<Edge>;
+
+	PolygonType polygon;
+	std::vector<PolyTree<Edge>> children;
+};
+
+
+
+// 0 <- Inside
+// 1 <- Outside
+// 2 <- UpperBoundary
+// 3 <- LowerBoundary
+// 4 <- InsideConjugateBoundary
+// 5 <- OutsideConjugateBoundary
+class BoundaryTypeIndexMap {
+	using enum BoundaryType;
+	static constexpr Size invalidIndex = static_cast<Size>(-1);
+
+	static constexpr std::array<Size, 12> indexMap{
+		invalidIndex,2/*UpperBoundary*/,3/*LowerBoundary*/,invalidIndex,
+		0/*Inside*/,invalidIndex,invalidIndex,4/*InsideConjugateBoundary*/,
+		1/*Outside*/,invalidIndex,invalidIndex,5/*OutsideConjugateBoundary*/
+	};
+
+public:
+	static constexpr Size Index(BoundaryType type) {
+		assert(static_cast<Size>(type) < 12);
+		assert(indexMap[static_cast<Size>(type)] != invalidIndex);
+
+		return indexMap[static_cast<Size>(type)];
+	}
+};
+
+/**
+ * @brief 并集 subject | clipper
+ */
+class UnionOperation {
+	using enum BoundaryType;
+	// | A                       | B                       | Result                  | Or                      |
+	// | Inside                  | Inside                  | Inside                  |                         |
+	// | Inside                  | Outside                 | Inside                  |                         |
+	// | Inside                  | UpperBoundary           | Inside                  |                         |
+	// | Inside                  | LowerBoundary           | Inside                  |                         |
+	// | Inside                  | InsideConjugateBoundary | Inside                  |                         |
+	// | Inside                  | OutsideConjugateBoundary| Inside                  |                         |
+	// | Outside                 | Inside                  | Inside                  |                         |
+	// | Outside                 | Outside                 | Outside                 |                         |
+	// | Outside                 | UpperBoundary           | UpperBoundary           |                         |
+	// | Outside                 | LowerBoundary           | LowerBoundary           |                         |
+	// | Outside                 | InsideConjugateBoundary | InsideConjugateBoundary |                         |
+	// | Outside                 | OutsideConjugateBoundary| OutsideConjugateBoundary|                         |
+	// | UpperBoundary           | Inside                  | Inside                  |                         |
+	// | UpperBoundary           | Outside                 | UpperBoundary           |                         |
+	// | UpperBoundary           | UpperBoundary           | UpperBoundary           |                         |
+	// | UpperBoundary           | LowerBoundary           | Inside                  | InsideConjugateBoundary |
+	// | UpperBoundary           | InsideConjugateBoundary | InsideConjugateBoundary | Inside                  | 
+	// | UpperBoundary           | OutsideConjugateBoundary| UpperBoundary           |                         |
+	// | LowerBoundary           | Inside                  | Inside                  |                         |
+	// | LowerBoundary           | Outside                 | LowerBoundary           |                         |
+	// | LowerBoundary           | UpperBoundary           | Inside                  | InsideConjugateBoundary |
+	// | LowerBoundary           | LowerBoundary           | LowerBoundary           |                         |
+	// | LowerBoundary           | InsideConjugateBoundary | InsideConjugateBoundary | Inside                  |
+	// | LowerBoundary           | OutsideConjugateBoundary| LowerBoundary           |                         |
+	// | InsideConjugateBoundary | Inside                  | Inside                  |                         |
+	// | InsideConjugateBoundary | Outside                 | InsideConjugateBoundary |                         |
+	// | InsideConjugateBoundary | UpperBoundary           | InsideConjugateBoundary | Inside                  |
+	// | InsideConjugateBoundary | LowerBoundary           | InsideConjugateBoundary | Inside                  |
+	// | InsideConjugateBoundary | InsideConjugateBoundary | InsideConjugateBoundary |                         |
+	// | InsideConjugateBoundary | OutsideConjugateBoundary| Inside                  |                         |
+	// | OutsideConjugateBoundary| Inside                  | Inside                  |                         |
+	// | OutsideConjugateBoundary| Outside                 | OutsideConjugateBoundary|                         |
+	// | OutsideConjugateBoundary| UpperBoundary           | UpperBoundary           |                         |
+	// | OutsideConjugateBoundary| LowerBoundary           | LowerBoundary           |                         |
+	// | OutsideConjugateBoundary| InsideConjugateBoundary | Inside                  |                         |
+	// | OutsideConjugateBoundary| OutsideConjugateBoundary| OutsideConjugateBoundary|                         |
+	static constexpr std::array<BoundaryType, 36> unionMap{
+		Inside,Inside,Inside,Inside,Inside,Inside,
+		Inside,Outside,UpperBoundary,LowerBoundary,InsideConjugateBoundary,OutsideConjugateBoundary,
+		Inside,UpperBoundary,UpperBoundary,Inside,InsideConjugateBoundary,UpperBoundary,
+		Inside,LowerBoundary,Inside,LowerBoundary,InsideConjugateBoundary,LowerBoundary,
+		Inside,InsideConjugateBoundary,InsideConjugateBoundary,InsideConjugateBoundary,InsideConjugateBoundary,Inside,
+		Inside,OutsideConjugateBoundary,UpperBoundary,LowerBoundary,Inside,OutsideConjugateBoundary,
+	};
+public:
+	BoundaryType operator()(BoundaryType subject_status, BoundaryType clipper_status) const {
+		// 还是打表快 XD
+		return unionMap[
+			BoundaryTypeIndexMap::Index(subject_status) * 6 + BoundaryTypeIndexMap::Index(clipper_status)
+		];
+	}
+};
+
+/**
+ * @brief 差集 subject - clipper
+ */
+class DifferenceOperation {
+	using enum BoundaryType;
+	// | A                       | B                       | Result                  | Or                      |
+	// | Inside                  | Inside                  | Outside                 |                         |
+	// | Inside                  | Outside                 | Inside                  |                         |
+	// | Inside                  | UpperBoundary           | LowerBoundary           |                         |
+	// | Inside                  | LowerBoundary           | UpperBoundary           |                         |
+	// | Inside                  | InsideConjugateBoundary | OutsideConjugateBoundary| Outside                 |
+	// | Inside                  | OutsideConjugateBoundary| InsideConjugateBoundary | Inside                  |
+	// | Outside                 | Inside                  | Outside                 |                         |
+	// | Outside                 | Outside                 | Outside                 |                         |
+	// | Outside                 | UpperBoundary           | Outside                 |                         |
+	// | Outside                 | LowerBoundary           | Outside                 |                         |
+	// | Outside                 | InsideConjugateBoundary | Outside                 |                         |
+	// | Outside                 | OutsideConjugateBoundary| Outside                 |                         |
+	// | UpperBoundary           | Inside                  | Outside                 |                         |
+	// | UpperBoundary           | Outside                 | UpperBoundary           |                         |
+	// | UpperBoundary           | UpperBoundary           | Outside                 | OutsideConjugateBoundary|
+	// | UpperBoundary           | LowerBoundary           | UpperBoundary           |                         |
+	// | UpperBoundary           | InsideConjugateBoundary | OutsideConjugateBoundary| Outside                 |
+	// | UpperBoundary           | OutsideConjugateBoundary| UpperBoundary           |                         |
+	// | LowerBoundary           | Inside                  | Outside                 |                         |
+	// | LowerBoundary           | Outside                 | LowerBoundary           |                         |
+	// | LowerBoundary           | UpperBoundary           | LowerBoundary           |                         |
+	// | LowerBoundary           | LowerBoundary           | Outside                 | OutsideConjugateBoundary|
+	// | LowerBoundary           | InsideConjugateBoundary | OutsideConjugateBoundary| Outside                 |
+	// | LowerBoundary           | OutsideConjugateBoundary| LowerBoundary           |                         |
+	// | InsideConjugateBoundary | Inside                  | Outside                 |                         |
+	// | InsideConjugateBoundary | Outside                 | InsideConjugateBoundary |                         |
+	// | InsideConjugateBoundary | UpperBoundary           | LowerBoundary           |                         |
+	// | InsideConjugateBoundary | LowerBoundary           | UpperBoundary           |                         |
+	// | InsideConjugateBoundary | InsideConjugateBoundary | Outside                 |                         |
+	// | InsideConjugateBoundary | OutsideConjugateBoundary| Outside                 |                         |
+	// | OutsideConjugateBoundary| Inside                  | Outside                 |                         |
+	// | OutsideConjugateBoundary| Outside                 | OutsideConjugateBoundary|                         |
+	// | OutsideConjugateBoundary| UpperBoundary           | OutsideConjugateBoundary| Outside                 |
+	// | OutsideConjugateBoundary| LowerBoundary           | OutsideConjugateBoundary| Outside                 |
+	// | OutsideConjugateBoundary| InsideConjugateBoundary | OutsideConjugateBoundary|                         |
+	// | OutsideConjugateBoundary| OutsideConjugateBoundary| Outside                 |                         |
+	static constexpr std::array<BoundaryType, 36> differenceMap{
+		Outside,Inside,LowerBoundary,UpperBoundary,OutsideConjugateBoundary,InsideConjugateBoundary,
+		Outside,Outside,Outside,Outside,Outside,Outside,
+		Outside,UpperBoundary,Outside,UpperBoundary,OutsideConjugateBoundary,UpperBoundary,
+		Outside,LowerBoundary,LowerBoundary,Outside,OutsideConjugateBoundary,LowerBoundary,
+		Outside,InsideConjugateBoundary,LowerBoundary,UpperBoundary,Outside,Outside,
+		Outside,OutsideConjugateBoundary,OutsideConjugateBoundary,OutsideConjugateBoundary,OutsideConjugateBoundary,Outside,
+	};
+public:
+	BoundaryType operator()(BoundaryType subject_status, BoundaryType clipper_status) const {
+		return differenceMap[
+			BoundaryTypeIndexMap::Index(subject_status) * 6 + BoundaryTypeIndexMap::Index(clipper_status)
+		];
+	}
+};
+
+/**
+ * @brief 反向差集 clipper - subject
+ */
+class ReverseDifferenceOperation {
+public:
+	BoundaryType operator()(BoundaryType subject_status, BoundaryType clipper_status) const {
+		return DifferenceOperation()(clipper_status, subject_status);
+	}
+};
+
+/**
+ * @brief 异或(XOR) subject ^ clipper
+ */
+class SymmetricDifferenceOperation {
+	using enum BoundaryType;
+	// | A                       | B                       | Result                  | Or                      |
+	// | Inside                  | Inside                  | Outside                 |                         |
+	// | Inside                  | Outside                 | Inside                  |                         |
+	// | Inside                  | UpperBoundary           | LowerBoundary           |                         |
+	// | Inside                  | LowerBoundary           | UpperBoundary           |                         |
+	// | Inside                  | InsideConjugateBoundary | OutsideConjugateBoundary|                         |
+	// | Inside                  | OutsideConjugateBoundary| InsideConjugateBoundary |                         |
+	// | Outside                 | Inside                  | Inside                  |                         |
+	// | Outside                 | Outside                 | Outside                 |                         |
+	// | Outside                 | UpperBoundary           | UpperBoundary           |                         |
+	// | Outside                 | LowerBoundary           | LowerBoundary           |                         |
+	// | Outside                 | InsideConjugateBoundary | InsideConjugateBoundary |                         |
+	// | Outside                 | OutsideConjugateBoundary| OutsideConjugateBoundary|                         |
+	// | UpperBoundary           | Inside                  | LowerBoundary           |                         |
+	// | UpperBoundary           | Outside                 | UpperBoundary           |                         |
+	// | UpperBoundary           | UpperBoundary           | Outside                 | OutsideConjugateBoundary|
+	// | UpperBoundary           | LowerBoundary           | Inside                  | InsideConjugateBoundary |
+	// | UpperBoundary           | InsideConjugateBoundary | LowerBoundary           |                         |
+	// | UpperBoundary           | OutsideConjugateBoundary| UpperBoundary           |                         |
+	// | LowerBoundary           | Inside                  | UpperBoundary           |                         |
+	// | LowerBoundary           | Outside                 | LowerBoundary           |                         |
+	// | LowerBoundary           | UpperBoundary           | Inside                  | InsideConjugateBoundary |
+	// | LowerBoundary           | LowerBoundary           | Outside                 | OutsideConjugateBoundary|
+	// | LowerBoundary           | InsideConjugateBoundary | UpperBoundary           |                         |
+	// | LowerBoundary           | OutsideConjugateBoundary| LowerBoundary           |                         |
+	// | InsideConjugateBoundary | Inside                  | OutsideConjugateBoundary|                         |
+	// | InsideConjugateBoundary | Outside                 | InsideConjugateBoundary |                         |
+	// | InsideConjugateBoundary | UpperBoundary           | LowerBoundary           |                         |
+	// | InsideConjugateBoundary | LowerBoundary           | UpperBoundary           |                         |
+	// | InsideConjugateBoundary | InsideConjugateBoundary | Outside                 |                         |
+	// | InsideConjugateBoundary | OutsideConjugateBoundary| Inside                  |                         |
+	// | OutsideConjugateBoundary| Inside                  | InsideConjugateBoundary |                         |
+	// | OutsideConjugateBoundary| Outside                 | OutsideConjugateBoundary|                         |
+	// | OutsideConjugateBoundary| UpperBoundary           | UpperBoundary           |                         |
+	// | OutsideConjugateBoundary| LowerBoundary           | LowerBoundary           |                         |
+	// | OutsideConjugateBoundary| InsideConjugateBoundary | Inside                  |                         |
+	// | OutsideConjugateBoundary| OutsideConjugateBoundary| Outside                 |                         |
+	static constexpr std::array<BoundaryType, 36> symmetricDifferenceMap{
+		Outside,Inside,LowerBoundary,UpperBoundary,OutsideConjugateBoundary,InsideConjugateBoundary,
+		Inside,Outside,UpperBoundary,LowerBoundary,InsideConjugateBoundary,OutsideConjugateBoundary,
+		LowerBoundary,UpperBoundary,Outside,Inside,LowerBoundary,UpperBoundary,
+		UpperBoundary,LowerBoundary,Inside,Outside,UpperBoundary,LowerBoundary,
+		OutsideConjugateBoundary,InsideConjugateBoundary,LowerBoundary,UpperBoundary,Outside,Inside,
+		InsideConjugateBoundary,OutsideConjugateBoundary,UpperBoundary,LowerBoundary,Inside,Outside,
+	};
+public:
+	BoundaryType operator()(BoundaryType subject_status, BoundaryType clipper_status) const {
+		return symmetricDifferenceMap[
+			BoundaryTypeIndexMap::Index(subject_status) * 6 + BoundaryTypeIndexMap::Index(clipper_status)
+		];
+	}
+};
+
+/**
+ * @brief 交集 subject & clipper
+ */
+class IntersectionOperation {
+	using enum BoundaryType;
+	// | A                       | B                       | Result                  | Or                      |
+	// | Inside                  | Inside                  | Inside                  |                         |
+	// | Inside                  | Outside                 | Outside                 |                         |
+	// | Inside                  | UpperBoundary           | UpperBoundary           |                         |
+	// | Inside                  | LowerBoundary           | LowerBoundary           |                         |
+	// | Inside                  | InsideConjugateBoundary | InsideConjugateBoundary |                         |
+	// | Inside                  | OutsideConjugateBoundary| OutsideConjugateBoundary|                         |
+	// | Outside                 | Inside                  | Outside                 |                         |
+	// | Outside                 | Outside                 | Outside                 |                         |
+	// | Outside                 | UpperBoundary           | Outside                 |                         |
+	// | Outside                 | LowerBoundary           | Outside                 |                         |
+	// | Outside                 | InsideConjugateBoundary | Outside                 |                         |
+	// | Outside                 | OutsideConjugateBoundary| Outside                 |                         |
+	// | UpperBoundary           | Inside                  | UpperBoundary           |                         |
+	// | UpperBoundary           | Outside                 | Outside                 |                         |
+	// | UpperBoundary           | UpperBoundary           | UpperBoundary           |                         |
+	// | UpperBoundary           | LowerBoundary           | LowerBoundary           | OutsideConjugateBoundary|
+	// | UpperBoundary           | InsideConjugateBoundary | UpperBoundary           |                         |
+	// | UpperBoundary           | OutsideConjugateBoundary| OutsideConjugateBoundary| Outside                 |
+	// | LowerBoundary           | Inside                  | LowerBoundary           |                         |
+	// | LowerBoundary           | Outside                 | Outside                 |                         |
+	// | LowerBoundary           | UpperBoundary           | Outside                 | OutsideConjugateBoundary|
+	// | LowerBoundary           | LowerBoundary           | LowerBoundary           |                         |
+	// | LowerBoundary           | InsideConjugateBoundary | LowerBoundary           |                         |
+	// | LowerBoundary           | OutsideConjugateBoundary| OutsideConjugateBoundary| Outside                 |
+	// | InsideConjugateBoundary | Inside                  | InsideConjugateBoundary |                         |
+	// | InsideConjugateBoundary | Outside                 | Outside                 |                         |
+	// | InsideConjugateBoundary | UpperBoundary           | UpperBoundary           |                         |
+	// | InsideConjugateBoundary | LowerBoundary           | LowerBoundary           |                         |
+	// | InsideConjugateBoundary | InsideConjugateBoundary | Outside                 |                         |
+	// | InsideConjugateBoundary | OutsideConjugateBoundary| Outside                 |                         |
+	// | OutsideConjugateBoundary| Inside                  | OutsideConjugateBoundary|                         |
+	// | OutsideConjugateBoundary| Outside                 | Outside                 |                         |
+	// | OutsideConjugateBoundary| UpperBoundary           | OutsideConjugateBoundary| Outside                 |
+	// | OutsideConjugateBoundary| LowerBoundary           | OutsideConjugateBoundary| Outside                 |
+	// | OutsideConjugateBoundary| InsideConjugateBoundary | Outside                 |                         |
+	// | OutsideConjugateBoundary| OutsideConjugateBoundary| OutsideConjugateBoundary|                         |
+	static constexpr std::array<BoundaryType, 36> intersectionMap{
+		Inside,Outside,UpperBoundary,LowerBoundary,InsideConjugateBoundary,OutsideConjugateBoundary,
+		Outside,Outside,Outside,Outside,Outside,Outside,
+		UpperBoundary,Outside,UpperBoundary,LowerBoundary,UpperBoundary,OutsideConjugateBoundary,
+		LowerBoundary,Outside,Outside,LowerBoundary,LowerBoundary,OutsideConjugateBoundary,
+		InsideConjugateBoundary,Outside,UpperBoundary,LowerBoundary,Outside,Outside,
+		OutsideConjugateBoundary,Outside,OutsideConjugateBoundary,OutsideConjugateBoundary,Outside,OutsideConjugateBoundary,
+	};
+public:
+	BoundaryType operator()(BoundaryType subject_status, BoundaryType clipper_status) const {
+		return intersectionMap[
+			BoundaryTypeIndexMap::Index(subject_status) * 6 + BoundaryTypeIndexMap::Index(clipper_status)
+		];
+	}
+};
+
+class ChooseFunctionBase {
+protected:
+
+
+	class Hedgehog {
+	private:
+		using enum BoundaryType;
+
+		std::span<const Handle> left;
+		std::span<const Handle> right;
+	public:
+		template<class Span0, class Span1>
+		Hedgehog(Span0&& l, Span1&& r) :left(std::forward<Span0>(l)), right(std::forward<Span1>(r)) {}
+
+		PolyEdgeInfo FindNextCCW(PolyEdgeInfo current, const std::vector<BoundaryType>& types) const {
+			assert(IsBoundary(current.type));
+
+			if (current.type == UpperBoundary) {
+				if (types[current.id] == InsideConjugateBoundary) {
+					return { current.id, LowerBoundary };
+				}
+
+				auto find = std::find_if(right.begin(), right.end(),
+					[target = current.id](Handle handle) { return target == handle; });
+				assert(find != right.end());
+
+				// 找第一个下边界
+				for (auto it = find + 1; it != right.end(); ++it) {
+					if (IsContainBoundary(types[*it], LowerBoundary)) return { *it, LowerBoundary };
+				}
+
+				// 找到第一个上边界
+				for (auto it = left.rbegin(); it != left.rend(); ++it) {
+					if (IsContainBoundary(types[*it], UpperBoundary)) return { *it, UpperBoundary };
+				}
+
+				// 找第一个下边界
+				for (auto it = right.begin(), eit = find + 1; it != eit; ++it) {
+					if (IsContainBoundary(types[*it], LowerBoundary)) return { *it, LowerBoundary };
+				}
+			} else {
+				if (types[current.id] == InsideConjugateBoundary) {
+					return { current.id, UpperBoundary };
+				}
+
+				auto find = std::find_if(left.begin(), left.end(),
+					[target = current.id](Handle handle) { return target == handle; });
+				assert(find != left.end());
+
+				// 找第一个上边界
+				for (auto it = std::make_reverse_iterator(find); it != left.rend(); ++it) {
+					if (IsContainBoundary(types[*it], UpperBoundary)) return { *it, UpperBoundary };
+				}
+
+				// 找到第一个下边界
+				for (auto it = right.begin(); it != right.end(); ++it) {
+					if (IsContainBoundary(types[*it], LowerBoundary)) return { *it, LowerBoundary };
+				}
+
+				// 找第一个上边界
+				for (auto it = left.rbegin(), eit = std::make_reverse_iterator(find); it != eit; ++it) {
+					if (IsContainBoundary(types[*it], UpperBoundary)) return { *it, UpperBoundary };
+				}
+			}
+
+			assert(false);
+			return {};
+		}
+
+		PolyEdgeInfo FindNextCW(PolyEdgeInfo current, const std::vector<BoundaryType>& types) const {
+			assert(IsBoundary(current.type));
+
+			if (current.type == LowerBoundary) {
+				if (types[current.id] == OutsideConjugateBoundary) {
+					return { current.id, UpperBoundary };
+				}
+
+				auto find = std::find_if(left.begin(), left.end(),
+					[target = current.id](Handle handle) { return target == handle; });
+				assert(find != left.end());
+
+				// 找第一个下边界
+				for (auto it = find + 1; it != left.end(); ++it) {
+					if (IsContainBoundary(types[*it], UpperBoundary)) return { *it, UpperBoundary };
+				}
+
+				// 找到第一个上边界
+				for (auto it = right.rbegin(); it != right.rend(); ++it) {
+					if (IsContainBoundary(types[*it], LowerBoundary)) return { *it, LowerBoundary };
+				}
+
+				// 找第一个下边界
+				for (auto it = left.begin(), eit = find + 1; it != eit; ++it) {
+					if (IsContainBoundary(types[*it], UpperBoundary)) return { *it, UpperBoundary };
+				}
+			} else {
+				if (types[current.id] == OutsideConjugateBoundary) {
+					return { current.id, LowerBoundary };
+				}
+
+				auto find = std::find_if(right.begin(), right.end(),
+					[target = current.id](Handle handle) { return target == handle; });
+				assert(find != right.end());
+
+				// 找第一个上边界
+				for (auto it = std::make_reverse_iterator(find); it != right.rend(); ++it) {
+					if (IsContainBoundary(types[*it], LowerBoundary)) return { *it, LowerBoundary };
+				}
+
+				// 找到第一个下边界
+				for (auto it = left.begin(); it != left.end(); ++it) {
+					if (IsContainBoundary(types[*it], UpperBoundary)) return { *it, UpperBoundary };
+				}
+
+				// 找第一个上边界
+				for (auto it = right.rbegin(), eit = std::make_reverse_iterator(find); it != eit; ++it) {
+					if (IsContainBoundary(types[*it], LowerBoundary)) return { *it, LowerBoundary };
+				}
+			}
+
+			assert(false);
+			return {};
+		}
+	};
+
+	template<class Drafting>
+	static Hedgehog MakeHedgehog(const Drafting& drafting, Handle vertex_id) {
+		const auto& vertex = drafting.vertexEvents[vertex_id];
+		return Hedgehog(vertex.endGroup.Span(), vertex.startGroup.Span());
+	}
+
+};
+
+
+// 内角连接
+class InternalAngleConnectChooseFunction : private ChooseFunctionBase {
+public:
+	template<class Drafting>
+	PolyEdgeInfo operator()(const Drafting& drafting, const std::vector<BoundaryType>& types, PolyEdgeInfo current) const {
+		const auto& edge = drafting.edgeEvent[current.id];
+		Handle vertex_id = (current.type == BoundaryType::UpperBoundary) ? edge.startPntGroup : edge.endPntGroup;
+
+		assert(current.id != tailor::npos);
+		assert(IsBoundary(current.type));
+
+		auto hedgehog = MakeHedgehog<Drafting>(drafting, vertex_id);
+
+		return hedgehog.FindNextCW(current, types);
+	}
+};
+
+// 外角连接
+class ExteriorAngleConnectChooseFunction : private ChooseFunctionBase {
+public:
+	template<class Drafting>
+	PolyEdgeInfo operator()(const Drafting& drafting, const std::vector<BoundaryType>& types, PolyEdgeInfo current) const {
+		const auto& edge = drafting.edgeEvent[current.id];
+		Handle vertex_id = (current.type == BoundaryType::UpperBoundary) ? edge.startPntGroup : edge.endPntGroup;
+
+		assert(current.id != tailor::npos);
+		assert(IsBoundary(current.type));
+
+		auto hedgehog = MakeHedgehog<Drafting>(drafting, vertex_id);
+
+		return hedgehog.FindNextCCW(current, types);
+	}
+};
+
+template<class ConnectChooseFunc>
+class ConnectFunction {
+public:
+	template<class... Args>
+	ConnectFunction(Args&&... args) :choose(std::forward<Args>(args)...) {}
+
+	/**
+	 * @brief	连接所有边界边为多边形
+	 * @tparam Drafting	草稿类型
+	 * @param drafting	草稿
+	 * @param types		边界类型数组
+	 * @return	多边形集合
+	 */
+	template<class Drafting>
+	std::vector<Polygon<PolyEdgeInfo>> Connect(const Drafting& drafting, std::vector<BoundaryType> types) const {
+		const auto& edges = drafting.edgeEvent;
+
+		std::vector<Polygon<PolyEdgeInfo>> polys;
+		for (size_t i = 0, n = edges.size(); i < n; ++i) {
+			if (!IsBoundaryX(types[i])) continue;
+
+			auto& poly = polys.emplace_back();
+
+			Handle first = i;
+			Handle current = i;
+			BoundaryType first_boundary = HasLowerBoundary(types[current]) ?
+				BoundaryType::LowerBoundary : BoundaryType::UpperBoundary;
+			BoundaryType curr_boundary = first_boundary;
+
+			do {
+				assert(tailor::npos != current);
+
+				auto edge_id = current;
+				const auto& edge = edges[edge_id];
+				assert(IsBoundaryX(curr_boundary));
+
+				// 选择下一条边, 直到构建出完整的循环
+				auto [next, next_boundary] = choose(drafting, types, { edge_id, curr_boundary });
+
+				assert(tailor::npos != next);
+				assert(IsBoundaryX(next_boundary));
+
+				poly.edges.push_back({ current, curr_boundary });
+
+				current = next;
+				curr_boundary = next_boundary;
+			} while (current != first || (current == first && curr_boundary != first_boundary));
+
+			// 重置所有已处理边的类型
+			for (auto& e : poly.edges) {
+				assert(
+					e.type == BoundaryType::UpperBoundary ||
+					e.type == BoundaryType::LowerBoundary
+				);
+
+				if (e.type == BoundaryType::UpperBoundary) {
+					types[e.id] = RemoveUpperBoundary(types[e.id]);
+				} else {
+					types[e.id] = RemoveLowerBoundary(types[e.id]);
+				}
+			}
+		}
+
+		return polys;
+	}
+
+private:
+	[[no_unique_address]]
+	ConnectChooseFunc choose;
+};
+
+using ConnectTypeOuterFirst = ConnectFunction<InternalAngleConnectChooseFunction>;
+using ConnectTypeInnerFirst = ConnectFunction<ExteriorAngleConnectChooseFunction>;
+
+/**
+ * @brief  普通布尔运算模式
+ * @tparam SubjectFillType		subject 填充类型
+ * @tparam ClipperFillType		clipper 填充类型
+ * @tparam BoolOperationType	布尔运算类型
+ */
+template<class SubjectFillType, class ClipperFillType,
+	class ConnectType, class BoolOperationType>
+class OrdinaryBoolOperationPattern {
+public:
+	[[no_unique_address]]
+	SubjectFillType subjectFillType;
+	[[no_unique_address]]
+	ClipperFillType clipperFillType;
+	[[no_unique_address]]
+	ConnectType connectType;
+	[[no_unique_address]]
+	BoolOperationType boolOperationType;
+public:
+	OrdinaryBoolOperationPattern() = default;
+
+	template<class SFT, class CFT, class CT, class BOT>
+	OrdinaryBoolOperationPattern(SFT&& sft, CFT&& cft, CT&& ct, BOT&& bt) :
+		subjectFillType(std::forward<SFT>(sft)),
+		clipperFillType(std::forward<CFT>(cft)),
+		connectType(std::forward<CT>(ct)),
+		boolOperationType(std::forward<BOT>(bt)) {
+	}
+
+private:
+	template<class EdgeEvent>
+	void AddSingleEdgeStatus(const EdgeEvent& edge, EdgeGroupFillStatus& status) const {
+		auto& fs = edge.isClipper ? status.clipper : status.subject;
+		edge.reversed ? (++fs.negitive) : (++fs.positive);
+	}
+
+	template<class Drafting>
+	EdgeGroupFillStatus CalcEdgeFillStatus(const Drafting& drafting, const typename Drafting::EdgeEvent& edge) const {
+		EdgeGroupFillStatus res{};
+		res.clipper.wind = edge.clipperWind;
+		res.subject.wind = edge.subjectWind;
+
+		if (!edge.aggregatedEdges) {
+			AddSingleEdgeStatus(edge, res);
+			return res;
+		}
+
+		for (auto id : edge.aggregatedEdges->sourceEdges) {
+			AddSingleEdgeStatus(drafting.edgeEvent[id], res);
+		}
+		return res;
+	}
+
+	template<class Drafting>
+	PolyEdgeInfo FirstBottomEdge(const Drafting& drafting, const PolyEdgeInfo& edge, const std::vector<BoundaryType>& types) const {
+		auto raw_type = types[edge.id];
+		const auto& edges = drafting.edgeEvent;
+
+		if (raw_type == BoundaryType::OutsideConjugateBoundary) {
+			if (edge.type == BoundaryType::UpperBoundary) {
+				return { edge.id, BoundaryType::LowerBoundary };
+			}
+		} else if (raw_type == BoundaryType::InsideConjugateBoundary) {
+			if (edge.type == BoundaryType::LowerBoundary) {
+				return { edge.id, BoundaryType::UpperBoundary };
+			}
+		}
+
+		Handle first = edges[edge.id].firstBottom;
+		if (tailor::npos == first) return {}; // 下方无边
+
+		while (tailor::npos != edges[first].firstSplit) {
+			first = edges[first].firstSplit;
+		}
+		if (tailor::npos == first) return {}; // 下方无边
+
+		auto next_raw_type = types[first];
+		if (next_raw_type == BoundaryType::OutsideConjugateBoundary) {
+			return { first, BoundaryType::UpperBoundary };
+		} else if (next_raw_type == BoundaryType::InsideConjugateBoundary) {
+			return { first, BoundaryType::LowerBoundary };
+		}
+		return { first, next_raw_type };
+	}
+
+	/**
+	 * @brief 获取多边形中的第一个下边界边
+	 * @tparam 草稿类型
+	 * @param drafting 草稿
+	 * @param polygon  多边形
+	 * @param types	   类型表
+	 * @return
+	 */
+	template<class Drafting>
+	PolyEdgeInfo LowestEdge(const Drafting& drafting, const Polygon<PolyEdgeInfo>& polygon, const std::vector<BoundaryType>& types) const {
+		const auto& edges = drafting.edgeEvent;
+		const auto& vertices = drafting.vertexEvents;
+
+		PolyEdgeInfo result{};
+		Handle vertex_id = tailor::npos;
+		for (const auto& edge_info : polygon.edges) {
+			auto cur_vertex_id = edges[edge_info.id].startPntGroup;
+			if (cur_vertex_id > vertex_id) continue;
+
+			if (cur_vertex_id == vertex_id) {
+				if (edge_info.id == result.id) {
+					// 共轭边
+					assert(
+						types[edge_info.id] == BoundaryType::InsideConjugateBoundary ||
+						types[edge_info.id] == BoundaryType::OutsideConjugateBoundary
+					);
+
+					if (types[edge_info.id] == BoundaryType::InsideConjugateBoundary) {
+						// ----->
+						// InsideConjugateBoundary 顺时针旋转
+						// <-----
+						result.type = BoundaryType::UpperBoundary;
+					} else {
+						// <-----
+						// OutsideConjugateBoundary 逆时针旋转
+						// ----->
+						result.type = BoundaryType::LowerBoundary;
+					}
+					continue;
+				}
+
+				auto span = vertices[cur_vertex_id].startGroup.Span();
+				bool no_change = false;
+				for (auto eid : span) {
+					if (eid == result.id) {
+						no_change = true;
+						break;
+					}
+					if (eid == edge_info.id) {
+						no_change = false;
+						break;
+					}
+				}
+				if (no_change) continue;
+			}
+
+			// 更新
+			vertex_id = cur_vertex_id;
+			result = edge_info;
+		}
+
+		assert(tailor::npos != result.id);
+		assert(tailor::npos != vertex_id);
+
+		return result;
+	}
+
+public:
+
+	template<class Drafting>
+	auto Stitch(Drafting& drafting) const {
+		auto& vertices = drafting.vertexEvents;
+		auto& edges = drafting.edgeEvent;
+		size_t size = edges.size();
+		std::vector<BoundaryType> types(size);
+
+		for (const auto& edge : edges) {
+			if (!edge.end) continue;
+
+			EdgeGroupFillStatus status = CalcEdgeFillStatus<Drafting>(drafting, edge);
+
+			auto subject_boundary_status = subjectFillType(status.subject);
+			auto clipper_boundary_status = clipperFillType(status.clipper);
+			auto res_boundary_status = boolOperationType(
+				subject_boundary_status, clipper_boundary_status
+			);
+
+			types[edge.id] = res_boundary_status;
+		}
+
+		std::vector<BoundaryType> types2(types);
+
+		std::vector<Polygon<PolyEdgeInfo>> polys = connectType.Connect(drafting, types);
+
+		// 禁用树结构（暂时）
+		if (false) {
+			std::vector<PolyTree<PolyEdgeInfo>> trees;
+			return trees;
+		}
+
+		static constexpr size_t invalid_group = static_cast<size_t>(-1);
+		constexpr auto CalcId = [](const PolyEdgeInfo& edge)->size_t {
+			assert(IsBoundary(edge.type));
+			return edge.id * 2 + static_cast<size_t>(edge.type == BoundaryType::LowerBoundary);
+			};
+
+		// 每组输出多边形的边对应的组
+		std::vector<size_t> groups(edges.size() * 2, invalid_group);
+		for (size_t i = 0, n = polys.size(); i < n; ++i) {
+			for (auto& edge : polys[i].edges) {
+				groups[CalcId(edge)] = i;
+			}
+		}
+
+		struct GroupInfo {
+			size_t parent = invalid_group;
+			size_t brother = invalid_group; // 当 brother 为 npos 时, 规定 parent 计算完毕
+
+			bool isOuter = false;
+			PolyEdgeInfo lowestEdgeInfo{};
+		};
+
+		std::vector<GroupInfo> group_infos(polys.size());
+
+		// 计算每组的最低边和边界属性
+		for (size_t i = 0, n = group_infos.size(); i < n; ++i) {
+			auto& group_info = group_infos[i];
+
+			// 如果最低边是下边界, 则为外边界
+			group_info.lowestEdgeInfo = LowestEdge(drafting, polys[i], types2);
+			assert(IsBoundary(group_info.lowestEdgeInfo.type));
+			group_info.isOuter = HasLowerBoundary(group_info.lowestEdgeInfo.type);
+		}
+
+		// 计算每组之间的关系
+		for (size_t i = 0, n = group_infos.size(); i < n; ++i) {
+			auto& group_info = group_infos[i];
+
+			PolyEdgeInfo fbe = FirstBottomEdge(
+				drafting, group_info.lowestEdgeInfo, types
+			);
+
+			// 有可能找到非输出边, 直到
+			while (
+				tailor::npos != fbe.id &&                  	 // 下方有边
+				(!IsBoundary(fbe.type) ||                    // 必须为合法的边界边
+					invalid_group == groups[CalcId(fbe)])) {
+				fbe = FirstBottomEdge(drafting, fbe, types);
+			}
+
+			// 本组为独立的外边界
+			if (tailor::npos == fbe.id || !IsBoundary(fbe.type)) continue;
+
+			// 由于 flbe 已经是最低的了, 所以不会找到依旧为本组的更低的边
+			auto group_id = groups[CalcId(fbe)];
+			assert(i != group_id);
+			assert(invalid_group != group_id);
+			assert(IsBoundaryX(types2[fbe.id]));
+
+			if (group_infos[group_id].isOuter == group_info.isOuter) {
+				// i 和 group_id 同级
+				group_info.brother = group_id;
+			} else {
+				// i 是 group_id 下级
+				group_info.parent = group_id;
+			}
+		}
+		// 计算每组的父节点
+		for (size_t i = 0, n = group_infos.size(); i < n; ++i) {
+			auto& group_info = group_infos[i];
+			if (invalid_group == group_info.brother) continue;
+
+			size_t brother = group_info.brother;
+			while (true) {
+				auto& brother_info = group_infos[brother];
+				if (invalid_group == brother_info.brother) {
+					group_info.parent = brother_info.parent;
+					break;
+				}
+				brother = brother_info.brother;
+			}
+		}
+
+		// 构建树
+		std::vector<size_t> indegree(group_infos.size());
+		// 构建入度表
+		for (size_t i = 0, n = group_infos.size(); i < n; ++i) {
+			auto& group_info = group_infos[i];
+			if (invalid_group == group_info.parent) {
+				assert(group_info.isOuter); // 最外层一定是外环
+				continue; // 为根节点
+			}
+			indegree[group_info.parent]++;
+		}
+
+		std::vector<PolyTree<PolyEdgeInfo>> trees(group_infos.size());
+		for (size_t i = 0, n = trees.size(); i < n; ++i) {
+			trees[i].polygon = std::move(polys[i]);
+		}
+
+		// 将具有父节点的节点移入父节点中
+		// 循环次数和层数有关
+		bool success = false;
+		while (!success) {
+			success = true;
+			for (size_t i = 0, n = indegree.size(); i < n; ++i) {
+				if (0 == indegree[i]) {
+					if (invalid_group == group_infos[i].parent) {
+						// 如果为根节点, 说明改节点已经准备完毕
+					} else {
+						trees[group_infos[i].parent].children.emplace_back(std::move(trees[i]));
+						indegree[group_infos[i].parent]--;
+						indegree[i] = invalid_group;// 设定非法值, 表示已经
+						success = false;
+					}
+				}
+			}
+		}
+
+		// 移除无用的节点
+		trees.erase(std::remove_if(trees.begin(), trees.end(),
+			[](const PolyTree<PolyEdgeInfo>& tree) {
+				return tree.polygon.edges.empty();
+			}), trees.end());
+
+		return trees;
+	}
+};
+
+#define SIMPLE_PATTERN_DEF(OPERATION) template<class SubjectFillType, class ClipperFillType, \
+	class ConnectType = ConnectTypeOuterFirst> \
+class OPERATION##Pattern : public OrdinaryBoolOperationPattern< \
+	SubjectFillType, ClipperFillType, \
+ConnectType, OPERATION##Operation\
+> {\
+public:\
+		OPERATION##Pattern() = default; \
+template<class SFT, class CFT, class CT>\
+OPERATION##Pattern(SFT&& sft, CFT&& cft, CT&& ct) :\
+OrdinaryBoolOperationPattern<\
+	SubjectFillType, ClipperFillType, \
+	ConnectType, OPERATION##Operation \
+>(std::forward<SFT>(sft), std::forward<CFT>(cft), \
+	std::forward<CT>(ct), OPERATION##Operation{}) {\
+}\
+};
+
+SIMPLE_PATTERN_DEF(Union)
+SIMPLE_PATTERN_DEF(Difference)
+SIMPLE_PATTERN_DEF(Intersection)
+SIMPLE_PATTERN_DEF(ReverseDifference)
+SIMPLE_PATTERN_DEF(SymmetricDifference)
+
+template<class ClipperFillType, class ConnectType = ConnectTypeOuterFirst>
+class OnlyClipPattern :public UnionPattern<IgnoreFillType, ClipperFillType, ConnectType> {
+public:
+	OnlyClipPattern() = default;
+	template<class CFT, class CT>
+	OnlyClipPattern(CFT&& cft, CT&& ct) : UnionPattern<
+		IgnoreFillType, ClipperFillType, ConnectType
+	>(IgnoreFillType{}, std::forward<CFT>(cft), std::forward<CT>(ct)) {
+	}
+};
+
+template<class SubjectFillType, class ConnectType = ConnectTypeOuterFirst>
+class OnlySubjectPattern :public UnionPattern<SubjectFillType, IgnoreFillType, ConnectType> {
+public:
+	OnlySubjectPattern() = default;
+	template<class SFT, class CT>
+	OnlySubjectPattern(SFT&& sft, CT&& ct) : UnionPattern<
+		SubjectFillType, IgnoreFillType, ConnectType
+	>(std::forward<SFT>(sft), IgnoreFillType{}, std::forward<CT>(ct)) {
+	}
+};
+
+#undef SIMPLE_PATTERN_DEF
+
+TAILOR_NAMESPACE_END
