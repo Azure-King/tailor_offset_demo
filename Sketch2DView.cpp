@@ -266,6 +266,106 @@ Sketch2DView::Edge Sketch2DView::findNearbyEdgeMidpoint(const QPointF& pos, qrea
     return Edge{ -1, -1, -1, false };
 }
 
+Sketch2DView::ResultEdgeLoc Sketch2DView::findNearbyResultEdge(const QPointF& screenPos, qreal threshold) const {
+	ResultEdgeLoc result;
+
+	// 只在去自交结果中查找
+	for (int pi = 0; pi < m_deselfIntersectionResults.size(); ++pi) {
+		const auto& poly = m_deselfIntersectionResults[pi];
+		if (poly.vertices.isEmpty()) continue;
+
+		for (int ei = 0; ei < poly.vertices.size(); ++ei) {
+			int next = (ei + 1) % poly.vertices.size();
+			const auto& v1 = poly.vertices[ei];
+			const auto& v2 = poly.vertices[next];
+
+			qreal distToEdge = -1.0;
+			if (qAbs(v1.bulge) < 1e-6) {
+				// 直线边：计算鼠标到线段的最近距离（世界坐标）
+				distToEdge = pointToSegmentDistWorld(screenPos, v1.point, v2.point);
+			} else {
+				// 弧线边：计算鼠标到弧段的最近距离（世界坐标）
+				ArcSegment arc = arcSegmentFromBulge(v1.point, v2.point, v1.bulge);
+				distToEdge = pointToArcDistWorld(screenPos, v1.point, v2.point, arc);
+			}
+
+			// 转换为屏幕坐标的阈值判断
+			qreal screenThreshold = threshold / m_scale;
+			if (distToEdge >= 0 && distToEdge <= screenThreshold) {
+				result.polygonIndex = pi;
+				result.edgeIndex = ei;
+				// 获取溯源 segmentId（从 edgeSegmentIds 数组中）
+				if (ei < poly.edgeSegmentIds.size()) {
+					result.segmentId = poly.edgeSegmentIds[ei];
+				}
+				return result;
+			}
+		}
+	}
+	return result;
+}
+
+qreal Sketch2DView::pointToSegmentDistWorld(const QPointF& screenPos, const QPointF& a, const QPointF& b) const {
+	QPointF p = screenToWorld(screenPos);
+
+	QPointF ab = b - a;
+	qreal abLenSq = ab.x() * ab.x() + ab.y() * ab.y();
+	if (abLenSq < 1e-12) {
+		QPointF delta = p - a;
+		return std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+	}
+
+	// 投影参数 t，钳制到 [0, 1]
+	qreal t = QPointF::dotProduct(p - a, ab) / abLenSq;
+	if (t < 0.0) t = 0.0;
+	if (t > 1.0) t = 1.0;
+
+	QPointF closest = a + t * ab;
+	QPointF delta = p - closest;
+	return std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+}
+
+qreal Sketch2DView::pointToArcDistWorld(const QPointF& screenPos, const QPointF& p1, const QPointF& p2,
+                                        const ArcSegment& arc) const {
+	QPointF p = screenToWorld(screenPos);
+
+	// 计算 p 相对于圆心的角度
+	qreal pAngle = angleDegAt(arc.center, p);
+	qreal distToCenter = QLineF(arc.center, p).length();
+
+	// 将角度标准化到 [0, 360)
+	auto normAngle = [](qreal a) {
+		while (a < 0) a += 360.0;
+		while (a >= 360.0) a -= 360.0;
+		return a;
+	};
+
+	qreal start = normAngle(arc.startAngleDeg);
+	qreal span = arc.spanAngleDeg;
+	qreal end = normAngle(start + span);
+	pAngle = normAngle(pAngle);
+
+	// 判断 pAngle 是否在弧段的角度范围内
+	bool inArcSpan;
+	if (span >= 0) {
+		inArcSpan = (start <= end) ? (pAngle >= start && pAngle <= end)
+		                           : (pAngle >= start || pAngle <= end);
+	} else {
+		inArcSpan = (end <= start) ? (pAngle <= start && pAngle >= end)
+		                           : (pAngle <= start || pAngle >= end);
+	}
+
+	if (inArcSpan) {
+		// 在弧段内，距离 = |到圆心距离 - 半径|
+		return std::abs(distToCenter - arc.radius);
+	} else {
+		// 在弧段外，取到两端点的最小距离
+		qreal d1 = QLineF(p, p1).length();
+		qreal d2 = QLineF(p, p2).length();
+		return (d1 < d2) ? d1 : d2;
+	}
+}
+
 Sketch2DView::Edge Sketch2DView::findNearbyVertex(const QPointF& pos, qreal threshold) const {
     // Check polygons first
     for (int i = 0; i < m_polygons.size(); ++i) {
@@ -537,11 +637,32 @@ void Sketch2DView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
+    // 只读模式下检测结果边悬停（用于第四视图偏置溯源交互）
+    if (m_readOnly && !m_deselfIntersectionResults.isEmpty()) {
+        ResultEdgeLoc hovered = findNearbyResultEdge(screenPos, 12.0);
+        bool changed = (hovered.polygonIndex != m_hoveredResultEdge.polygonIndex ||
+                        hovered.edgeIndex != m_hoveredResultEdge.edgeIndex);
+        if (changed) {
+            if (hovered.polygonIndex >= 0) {
+                m_hoveredResultEdge = hovered;
+                emit resultEdgeHovered(hovered.polygonIndex, hovered.edgeIndex, hovered.segmentId);
+            } else {
+                m_hoveredResultEdge = ResultEdgeLoc{};
+                emit resultEdgeHoverEnded();
+            }
+        }
+    }
+
     QWidget::mouseMoveEvent(event);
 }
 
 void Sketch2DView::leaveEvent(QEvent* event) {
     m_mousePos = QPointF();
+    // 清除结果边悬停状态
+    if (m_hoveredResultEdge.polygonIndex >= 0) {
+        m_hoveredResultEdge = ResultEdgeLoc{};
+        emit resultEdgeHoverEnded();
+    }
     update();
     QWidget::leaveEvent(event);
 }
@@ -727,6 +848,69 @@ void Sketch2DView::paintEvent(QPaintEvent* event) {
     }
     painter.restore();
 
+    // 主视图：高亮与segmentId匹配的原始多边形边（用于偏置溯源） 未读
+    if (!m_highlightedSourceSegmentIds.isEmpty() && !m_polygons.isEmpty()) {
+        painter.save();
+        painter.setBrush(Qt::NoBrush);
+
+        int cumulativeEdgeIdx = 0;
+        for (int pi = 0; pi < m_polygons.size(); ++pi) {
+            const auto& poly = m_polygons[pi];
+            int n = poly.vertices.size();
+
+            for (int ei = 0; ei < n; ++ei) {
+                int globalIdx = cumulativeEdgeIdx + ei;
+                if (!m_highlightedSourceSegmentIds.contains(globalIdx)) continue;
+
+                int next = (ei + 1) % n;
+                const auto& v1 = poly.vertices[ei];
+                const auto& v2 = poly.vertices[next];
+
+                // 亮金色外边 + 内芯高亮
+                QPen outerPen(QColor(255, 215, 0, 100), 8 / m_scale);
+                outerPen.setCapStyle(Qt::RoundCap);
+                outerPen.setJoinStyle(Qt::RoundJoin);
+                painter.setPen(outerPen);
+
+                if (qAbs(v1.bulge) < 1e-6) {
+                    painter.drawLine(v1.point, v2.point);
+                } else {
+                    ArcSegment arc = arcSegmentFromBulge(v1.point, v2.point, v1.bulge);
+                    QPainterPath edgePath;
+                    const QRectF rect(arc.center.x() - arc.radius, arc.center.y() - arc.radius,
+                        arc.radius * 2.0, arc.radius * 2.0);
+                    edgePath.moveTo(v1.point);
+                    edgePath.arcTo(rect, arc.startAngleDeg, arc.spanAngleDeg);
+                    painter.drawPath(edgePath);
+                }
+
+                QPen innerPen(QColor(255, 215, 0), 4 / m_scale);
+                innerPen.setCapStyle(Qt::RoundCap);
+                innerPen.setJoinStyle(Qt::RoundJoin);
+                painter.setPen(innerPen);
+
+                if (qAbs(v1.bulge) < 1e-6) {
+                    painter.drawLine(v1.point, v2.point);
+                } else {
+                    ArcSegment arc = arcSegmentFromBulge(v1.point, v2.point, v1.bulge);
+                    QPainterPath edgePath;
+                    const QRectF rect(arc.center.x() - arc.radius, arc.center.y() - arc.radius,
+                        arc.radius * 2.0, arc.radius * 2.0);
+                    edgePath.moveTo(v1.point);
+                    edgePath.arcTo(rect, arc.startAngleDeg, arc.spanAngleDeg);
+                    painter.drawPath(edgePath);
+                }
+
+                // 端点小圆点标记
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(255, 215, 0));
+                painter.drawEllipse(v1.point, 4 / m_scale, 4 / m_scale);
+            }
+            cumulativeEdgeIdx += n;
+        }
+        painter.restore();
+    }
+
     // Draw polyline vertices and edge midpoints (for editing)
     if (!m_readOnly) {
         painter.save();
@@ -851,6 +1035,67 @@ void Sketch2DView::paintEvent(QPaintEvent* event) {
         painter.restore();
     }
 
+    // 绘制高亮的源边（segmentId 匹配的 fillResult 边，用于偏置溯源）
+    // 第二/三/四视图：高亮 fillResults 中匹配的打断边
+    if (!m_highlightedSourceSegmentIds.isEmpty() && !m_fillResults.isEmpty()) {
+        painter.save();
+        painter.setBrush(Qt::NoBrush);
+        for (const auto& poly : m_fillResults) {
+            if (poly.vertices.isEmpty()) continue;
+
+            for (int j = 0; j < poly.vertices.size(); ++j) {
+                int segId = (j < poly.edgeSegmentIds.size()) ? poly.edgeSegmentIds[j] : -1;
+                if (segId < 0 || !m_highlightedSourceSegmentIds.contains(segId)) continue;
+
+                int next = (j + 1) % poly.vertices.size();
+                const auto& v1 = poly.vertices[j];
+                const auto& v2 = poly.vertices[next];
+
+                // 亮金色外圈光晕
+                QPen outerPen(QColor(255, 215, 0, 100), 8 / m_scale);
+                outerPen.setCapStyle(Qt::RoundCap);
+                outerPen.setJoinStyle(Qt::RoundJoin);
+                painter.setPen(outerPen);
+
+                if (qAbs(v1.bulge) < 1e-6) {
+                    painter.drawLine(v1.point, v2.point);
+                } else {
+                    ArcSegment arc = arcSegmentFromBulge(v1.point, v2.point, v1.bulge);
+                    QPainterPath edgePath;
+                    const QRectF rect(arc.center.x() - arc.radius, arc.center.y() - arc.radius,
+                        arc.radius * 2.0, arc.radius * 2.0);
+                    edgePath.moveTo(v1.point);
+                    edgePath.arcTo(rect, arc.startAngleDeg, arc.spanAngleDeg);
+                    painter.drawPath(edgePath);
+                }
+
+                // 亮金色内线
+                QPen innerPen(QColor(255, 215, 0), 4 / m_scale);
+                innerPen.setCapStyle(Qt::RoundCap);
+                innerPen.setJoinStyle(Qt::RoundJoin);
+                painter.setPen(innerPen);
+
+                if (qAbs(v1.bulge) < 1e-6) {
+                    painter.drawLine(v1.point, v2.point);
+                } else {
+                    ArcSegment arc = arcSegmentFromBulge(v1.point, v2.point, v1.bulge);
+                    QPainterPath edgePath;
+                    const QRectF rect(arc.center.x() - arc.radius, arc.center.y() - arc.radius,
+                        arc.radius * 2.0, arc.radius * 2.0);
+                    edgePath.moveTo(v1.point);
+                    edgePath.arcTo(rect, arc.startAngleDeg, arc.spanAngleDeg);
+                    painter.drawPath(edgePath);
+                }
+
+                // 端点标记
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(255, 215, 0));
+                painter.drawEllipse(v1.point, 3 / m_scale, 3 / m_scale);
+            }
+        }
+        painter.restore();
+    }
+
     // Draw self-intersection processing results (orange, for reference)
     if (!m_selfIntersectionResults.isEmpty()) {
         painter.save();
@@ -960,6 +1205,58 @@ void Sketch2DView::paintEvent(QPaintEvent* event) {
             painter.drawPath(fillPath);
         }
         painter.restore();
+    }
+
+    // 绘制悬停的高亮偏置边（用于第四视图溯源交互）
+    if (m_hoveredResultEdge.polygonIndex >= 0 &&
+        m_hoveredResultEdge.polygonIndex < m_deselfIntersectionResults.size()) {
+        const auto& poly = m_deselfIntersectionResults[m_hoveredResultEdge.polygonIndex];
+        int ei = m_hoveredResultEdge.edgeIndex;
+        if (ei >= 0 && ei < poly.vertices.size()) {
+            painter.save();
+            painter.setBrush(Qt::NoBrush);
+            int next = (ei + 1) % poly.vertices.size();
+            const auto& v1 = poly.vertices[ei];
+            const auto& v2 = poly.vertices[next];
+
+            // 外发光效果：宽暗色笔
+            QPen glowPen(QColor(0, 255, 255, 80), 8 / m_scale);
+            glowPen.setCapStyle(Qt::RoundCap);
+            glowPen.setJoinStyle(Qt::RoundJoin);
+            painter.setPen(glowPen);
+
+            if (qAbs(v1.bulge) < 1e-6) {
+                painter.drawLine(v1.point, v2.point);
+            } else {
+                ArcSegment arc = arcSegmentFromBulge(v1.point, v2.point, v1.bulge);
+                QPainterPath edgePath;
+                const QRectF rect(arc.center.x() - arc.radius, arc.center.y() - arc.radius,
+                    arc.radius * 2.0, arc.radius * 2.0);
+                edgePath.moveTo(v1.point);
+                edgePath.arcTo(rect, arc.startAngleDeg, arc.spanAngleDeg);
+                painter.drawPath(edgePath);
+            }
+
+            // 内层亮色笔
+            QPen hlPen(QColor(0, 255, 255), 3 / m_scale);
+            hlPen.setCapStyle(Qt::RoundCap);
+            hlPen.setJoinStyle(Qt::RoundJoin);
+            painter.setPen(hlPen);
+
+            if (qAbs(v1.bulge) < 1e-6) {
+                painter.drawLine(v1.point, v2.point);
+            } else {
+                ArcSegment arc = arcSegmentFromBulge(v1.point, v2.point, v1.bulge);
+                QPainterPath edgePath;
+                const QRectF rect(arc.center.x() - arc.radius, arc.center.y() - arc.radius,
+                    arc.radius * 2.0, arc.radius * 2.0);
+                edgePath.moveTo(v1.point);
+                edgePath.arcTo(rect, arc.startAngleDeg, arc.spanAngleDeg);
+                painter.drawPath(edgePath);
+            }
+
+            painter.restore();
+        }
     }
 
     // Reset transform for HUD
@@ -1353,5 +1650,15 @@ void Sketch2DView::setDeselfIntersectionResults(const QVector<OffsetResultPolygo
 
 void Sketch2DView::setFillResults(const QVector<OffsetResultPolygon>& results) {
     m_fillResults = results;
+    update();
+}
+
+void Sketch2DView::setHighlightedSourceSegmentIds(const QSet<int>& segmentIds) {
+    m_highlightedSourceSegmentIds = segmentIds;
+    update();
+}
+
+void Sketch2DView::clearHighlightedSourceSegmentIds() {
+    m_highlightedSourceSegmentIds.clear();
     update();
 }

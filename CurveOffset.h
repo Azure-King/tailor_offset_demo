@@ -5,6 +5,7 @@
 #include <optional>
 #include <array>
 #include <vector>
+#include <functional>
 
 namespace tailor_offset {
 	// 前置声明
@@ -65,6 +66,23 @@ namespace tailor_offset {
 		using JoinResult = OffsetJoinResult<CurveType>;
 		using ClosedResult = OffsetClosedResult<CurveType>;
 
+		/// 输出边的来源类型
+		enum class EdgeTag {
+			OffsetEdge,       // 直接偏置的边，对应输入曲线的某条边
+			JoinConvex,       // 凸点连接弧段
+			JoinConcaveLine1, // 凹点连接：从偏置终点到原始顶点的直线段
+			JoinConcaveLine2  // 凹点连接：从原始顶点到偏置起点的直线段
+		};
+
+		/// 回调函数类型：当每条输出边生成时调用
+		/// sourceIndex: 对应的输入曲线索引
+		/// tag: 输出边类型
+		/// resultCurve: 生成的输出曲线
+		using TagCallback = std::function<void(int sourceIndex, EdgeTag tag, const CurveType& resultCurve)>;
+
+		/// 静态回调，由外部设置
+		static TagCallback s_onEdgeTagged;
+
 		static ClosedResult OffsetClosed(
 			const std::vector<CurveType>& curves,
 			T distance,
@@ -87,6 +105,9 @@ namespace tailor_offset {
 
 				if (offsetCurves[i].has_value()) {
 					result.Push(offsetCurves[i].value());
+					if (s_onEdgeTagged) {
+						s_onEdgeTagged(static_cast<int>(i), EdgeTag::OffsetEdge, offsetCurves[i].value());
+					}
 				}
 
 				auto joinResult = OffsetJoin(
@@ -96,8 +117,20 @@ namespace tailor_offset {
 					distance,
 					ccw);
 
+				bool joinIsConvex = (joinResult.Size() == 1);
+				int joinIdx = 0;
 				for (const auto& joinCurve : joinResult) {
 					result.Push(joinCurve);
+					if (s_onEdgeTagged) {
+						EdgeTag tag;
+						if (joinIsConvex) {
+							tag = EdgeTag::JoinConvex;
+						} else {
+							tag = (joinIdx == 0) ? EdgeTag::JoinConcaveLine1 : EdgeTag::JoinConcaveLine2;
+						}
+						s_onEdgeTagged(static_cast<int>(i), tag, joinCurve);
+					}
+					++joinIdx;
 				}
 			}
 
@@ -329,4 +362,10 @@ namespace tailor_offset {
 			return result;
 		}
 	};
+	
+	// 静态回调成员定义（模板偏特化的静态成员）
+	template <typename PType, typename T, typename UserData>
+	typename CurveOffseter<tailor::ArcSegment<PType, T, UserData>, T>::TagCallback
+		CurveOffseter<tailor::ArcSegment<PType, T, UserData>, T>::s_onEdgeTagged;
+
 } // namespace tailor_offset

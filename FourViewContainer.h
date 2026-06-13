@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QSlider>
+#include <QHash>
 #include <vector>
 #include "BooleanOperations.h"
 
@@ -52,6 +53,9 @@ private:
     // 流水线中间数据：存储弧段结果以便在步骤间传递
     std::vector<std::vector<tailor_visualization::Arc>> m_mergedFillArcs;   // 自交处理+合并后的弧段
     std::vector<std::vector<tailor_visualization::Arc>> m_mergedOffsetArcs; // 偏置+合并后的弧段
+
+    // 本地 segmentId → 原始输入边 ID 的映射，用于第一视图高亮溯源
+    QHash<int, int> m_localToOriginalSegId;
 
     // 流水线控件
     QComboBox* m_fillTypeCombo = nullptr;

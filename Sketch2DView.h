@@ -76,6 +76,7 @@ public:
         QVector<PolygonVertex> vertices;
         QColor color;
         bool isHole = false;
+        QVector<int> edgeSegmentIds; // 每条边的 segmentId，用于高亮溯源
     };
     void setOffsetResults(const QVector<OffsetResultPolygon>& results);
     const QVector<OffsetResultPolygon>& offsetResults() const { return m_offsetResults; }
@@ -90,6 +91,10 @@ public:
     void setDeselfIntersectionResults(const QVector<OffsetResultPolygon>& results);
     const QVector<OffsetResultPolygon>& deselfIntersectionResults() const { return m_deselfIntersectionResults; }
     void clearDeselfIntersectionResults() { m_deselfIntersectionResults.clear(); update(); }
+
+    // 高亮源边（用于第四视图的偏置溯源交互）
+    void setHighlightedSourceSegmentIds(const QSet<int>& segmentIds);
+    void clearHighlightedSourceSegmentIds();
 
     // 填充结果管理（第二视图用，不同多边形不同颜色）
     void setFillResults(const QVector<OffsetResultPolygon>& results);
@@ -150,6 +155,16 @@ private:
     bool isNearEdgeMidpoint(const QPointF& p1, const QPointF& p2, const QPointF& pos, qreal threshold = 8.0) const;
     Edge findNearbyEdgeMidpoint(const QPointF& pos, qreal threshold = 8.0) const;
     Edge findNearbyVertex(const QPointF& pos, qreal threshold = 8.0) const;
+    // 查找附近的结果边（deselfIntersectionResults）
+    struct ResultEdgeLoc {
+        int polygonIndex = -1;  // 结果多边形索引
+        int edgeIndex = -1;     // 边索引
+        int segmentId = -1;     // 溯源 segmentId
+    };
+    ResultEdgeLoc findNearbyResultEdge(const QPointF& screenPos, qreal threshold = 12.0) const;
+    // 点到线/弧的最近距离（世界坐标）
+    qreal pointToSegmentDistWorld(const QPointF& screenPos, const QPointF& a, const QPointF& b) const;
+    qreal pointToArcDistWorld(const QPointF& screenPos, const QPointF& p1, const QPointF& p2, const ArcSegment& arc) const;
 
     QPointF worldToScreen(const QPointF& worldPos) const;
     QPointF screenToWorld(const QPointF& screenPos) const;
@@ -168,6 +183,10 @@ private:
     QSet<int> m_selectedPolygons;   // 多边形的多选索引集合
     QSet<int> m_selectedPolylines;  // 多段线的多选索引集合
     int m_hoveredPolygonIndex = -1;  // 鼠标悬停的高亮多边形（只读模式下）
+
+    // 结果边悬停状态
+    ResultEdgeLoc m_hoveredResultEdge;            // 当前悬停的结果边
+    QSet<int> m_highlightedSourceSegmentIds;       // 需要高亮的源边 segmentId 集合
 
     // 偏置结果
     QVector<OffsetResultPolygon> m_offsetResults;
@@ -224,4 +243,7 @@ signals:
     void polylineModified();
     void polygonModified();
     void polygonColorChanged(int polygonIndex, const QColor& color);
+    // 结果边悬停信号：polygonIndex（结果数组中索引），edgeIndex（边索引），segmentId（溯源ID）
+    void resultEdgeHovered(int polygonIndex, int edgeIndex, int segmentId);
+    void resultEdgeHoverEnded();
 };

@@ -27,7 +27,7 @@ static std::vector<tailor_visualization::Arc> polygonToArcs(
     return arcs;
 }
 
-// 辅助函数：将 Arc 数组转换为 Sketch2DView::OffsetResultPolygon
+// 辅助函数：将 Arc 数组转换为 Sketch2DView::OffsetResultPolygon（并携带 segmentId）
 static Sketch2DView::OffsetResultPolygon arcsToPolygon(
     const std::vector<tailor_visualization::Arc>& arcs,
     const QColor& color = QColor(),
@@ -40,6 +40,8 @@ static Sketch2DView::OffsetResultPolygon arcsToPolygon(
         vertex.point = QPointF(arc.Point0().x, arc.Point0().y);
         vertex.bulge = arc.Bulge();
         result.vertices.append(vertex);
+        // 携带 segmentId 用于溯源高亮
+        result.edgeSegmentIds.append(arc.Data().segmentId);
     }
     return result;
 }
@@ -72,6 +74,35 @@ void FourViewContainer::setupViews() {
     connect(m_mainView, &Sketch2DView::polylineModified, this, &FourViewContainer::runFullPipeline);
     connect(m_mainView, &Sketch2DView::polygonModified, this, &FourViewContainer::runFullPipeline);
     connect(m_mainView, &Sketch2DView::polygonColorChanged, this, &FourViewContainer::runFullPipeline);
+
+    // 第四视图偏置溯源交互：悬停偏置边时高亮对应的源边
+    connect(m_bottomRightView, &Sketch2DView::resultEdgeHovered, this, [this](int polygonIndex, int edgeIndex, int segmentId) {
+        Q_UNUSED(polygonIndex);
+        Q_UNUSED(edgeIndex);
+        // segmentId 现在是 fillResults 的本地唯一 ID（打断后的边）
+
+        // 第二三四视图：用本地 segmentId 匹配 fillResults 中的打断边
+        QSet<int> localSegIds;
+        if (segmentId >= 0) {
+            localSegIds.insert(segmentId);
+        }
+        m_topRightView->setHighlightedSourceSegmentIds(localSegIds);
+        m_bottomLeftView->setHighlightedSourceSegmentIds(localSegIds);
+        m_bottomRightView->setHighlightedSourceSegmentIds(localSegIds);
+
+        // 第一视图：映射回原始输入边 ID，高亮完整原始边
+        QSet<int> origSegIds;
+        if (segmentId >= 0 && m_localToOriginalSegId.contains(segmentId)) {
+            origSegIds.insert(m_localToOriginalSegId[segmentId]);
+        }
+        m_mainView->setHighlightedSourceSegmentIds(origSegIds);
+    });
+    connect(m_bottomRightView, &Sketch2DView::resultEdgeHoverEnded, this, [this]() {
+        m_mainView->clearHighlightedSourceSegmentIds();
+        m_topRightView->clearHighlightedSourceSegmentIds();
+        m_bottomLeftView->clearHighlightedSourceSegmentIds();
+        m_bottomRightView->clearHighlightedSourceSegmentIds();
+    });
 }
 
 void FourViewContainer::setupLayout() {
@@ -213,6 +244,12 @@ void FourViewContainer::setupLayout() {
 }
 
 void FourViewContainer::synchronizeViews() {
+    // 清除所有视图的高亮状态
+    m_mainView->clearHighlightedSourceSegmentIds();
+    m_topRightView->clearHighlightedSourceSegmentIds();
+    m_bottomLeftView->clearHighlightedSourceSegmentIds();
+    m_bottomRightView->clearHighlightedSourceSegmentIds();
+
     // 清除第二视图的所有数据（不显示原始多边形）
     m_topRightView->clearSelection();
     m_topRightView->clearFillResults();
@@ -285,6 +322,19 @@ void FourViewContainer::processSelfIntersection() {
     if constexpr (tailor_visualization::ENABLE_CURVE_MERGE) {
         tailor_visualization::MergeAdjacentCurvesBatch(resultArcs);
     }
+
+    // Step 2.6: 重新分配唯一的本地 segmentId，替换原始输入边 ID
+    // 这样每条 fillResult 边都有唯一标识，高亮时能精确定位到打断后的具体边
+    m_localToOriginalSegId.clear();
+    int localSegId = 0;
+    for (auto& polygonArcs : resultArcs) {
+        for (auto& arc : polygonArcs) {
+            int originalId = arc.Data().segmentId;
+            m_localToOriginalSegId[localSegId] = originalId;
+            arc.Data().segmentId = localSegId++;
+        }
+    }
+
     m_mergedFillArcs = resultArcs;  // 保存到中间数据供下个步骤使用
     qDebug() << "processSelfIntersection: after merge, resultArcs.size() =" << resultArcs.size();
 
@@ -343,7 +393,7 @@ void FourViewContainer::processCurveOffset(double distance) {
 
             m_mergedOffsetArcs.push_back(offsetArcs);
 
-            // 转换为显示数据
+            // 转换为显示数据（携带 segmentId）
             Sketch2DView::OffsetResultPolygon resultPoly;
             resultPoly.color = QColor(100, 149, 237);  // 蓝色
             for (const auto& arc : offsetArcs) {
@@ -351,6 +401,7 @@ void FourViewContainer::processCurveOffset(double distance) {
                     QPointF(arc.Point0().x, arc.Point0().y),
                     arc.Bulge()
                     });
+                resultPoly.edgeSegmentIds.append(arc.Data().segmentId);
             }
             offsetResults.append(resultPoly);
         }
