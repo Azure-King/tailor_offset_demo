@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(TailorDemo LANGUAGES CXX)
+project(TailorOffsetDemo LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD_REQUIRED ON) 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
@@ -34,7 +34,7 @@ endif()
 # 查找 Qt6
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-qt_add_executable(TailorDemo
+qt_add_executable(TailorOffsetDemo
     main.cpp
     Sketch2DView.h
     Sketch2DView.cpp
@@ -49,8 +49,8 @@ qt_add_executable(TailorDemo
 
 # 添加第三方库路径
 set(THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
-target_include_directories(TailorDemo PRIVATE
+target_include_directories(TailorOffsetDemo PRIVATE
     "${THIRD_PARTY_DIR}/tailor/include/tailor"
 )
 
-target_link_libraries(TailorDemo PRIVATE Qt6::Widgets)
+target_link_libraries(TailorOffsetDemo PRIVATE Qt6::Widgets)

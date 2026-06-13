@@ -24,6 +24,7 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
     QMainWindow window;
+    window.setWindowTitle("TailorOffsetDemo");
     window.resize(1200, 700);
 
     // 创建主水平分割器
