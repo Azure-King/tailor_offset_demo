@@ -16,7 +16,7 @@ if(MSVC)
 elseif(MINGW)
     # MinGW GCC 使用大对象支持
     add_compile_options(-Wa,-mbig-obj)
-endif()
+endif() 
 
 # Clang/LLVM 编译选项（不包括 MSVC 的 clang-cl）
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" AND NOT MSVC)
@@ -44,12 +44,13 @@ qt_add_executable(TailorDemo
     BooleanOperations.cpp
     PolygonIO.h
     PolygonIO.cpp
+    CurveOffset.h
 )
 
 # 添加第三方库路径
 set(THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 target_include_directories(TailorDemo PRIVATE
-    "${THIRD_PARTY_DIR}/tailor"
+    "${THIRD_PARTY_DIR}/tailor/include/tailor"
 )
 
 target_link_libraries(TailorDemo PRIVATE Qt6::Widgets)

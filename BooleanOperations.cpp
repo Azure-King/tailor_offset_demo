@@ -53,13 +53,13 @@ namespace tailor_visualization {
         // 添加所有Clip多边形（裁剪多边形）并分割为单调弧段
         for (const auto& clipPoly : clipPolygons_) {
             auto monotonicClip = SplitToMonotonic(clipPoly);
-            tailor.AddClipper(monotonicClip.begin(), monotonicClip.end());
+            tailor.AddToPolygonSetA(monotonicClip.begin(), monotonicClip.end());
         }
 
         // 添加所有Subject多边形（被裁剪多边形）并分割为单调弧段
         for (const auto& subjectPoly : subjectPolygons_) {
             auto monotonicSubject = SplitToMonotonic(subjectPoly);
-            tailor.AddSubject(monotonicSubject.begin(), monotonicSubject.end());
+            tailor.AddToPolygonSetB(monotonicSubject.begin(), monotonicSubject.end());
         }
 
         // 执行布尔运算
@@ -82,13 +82,13 @@ namespace tailor_visualization {
         // 添加所有Clip多边形（裁剪多边形）并分割为单调弧段
         for (const auto& clipPoly : clipPolygons_) {
             auto monotonicClip = SplitToMonotonic(clipPoly);
-            tailor.AddClipper(monotonicClip.begin(), monotonicClip.end());
+            tailor.AddToPolygonSetA(monotonicClip.begin(), monotonicClip.end());
         }
 
         // 添加所有Subject多边形（被裁剪多边形）并分割为单调弧段
         for (const auto& subjectPoly : subjectPolygons_) {
             auto monotonicSubject = SplitToMonotonic(subjectPoly);
-            tailor.AddSubject(monotonicSubject.begin(), monotonicSubject.end());
+            tailor.AddToPolygonSetB(monotonicSubject.begin(), monotonicSubject.end());
         }
 
         // 执行裁剪
@@ -115,13 +115,13 @@ namespace tailor_visualization {
         // 添加所有Clip多边形（裁剪多边形）并分割为单调弧段
         for (const auto& clipPoly : clipPolygons_) {
             auto monotonicClip = SplitToMonotonic(clipPoly);
-            tailor.AddClipper(monotonicClip.begin(), monotonicClip.end());
+            tailor.AddToPolygonSetA(monotonicClip.begin(), monotonicClip.end());
         }
 
         // 添加所有Subject多边形（被裁剪多边形）并分割为单调弧段
         for (const auto& subjectPoly : subjectPolygons_) {
             auto monotonicSubject = SplitToMonotonic(subjectPoly);
-            tailor.AddSubject(monotonicSubject.begin(), monotonicSubject.end());
+            tailor.AddToPolygonSetB(monotonicSubject.begin(), monotonicSubject.end());
         }
 
         // 执行裁剪
@@ -205,7 +205,7 @@ namespace tailor_visualization {
         // 添加 Clip 集合的多边形
         for (const auto& clipPoly : clipPolygons_) {
             auto monotonicClip = SplitToMonotonic(clipPoly);
-            tailor.AddClipper(monotonicClip.begin(), monotonicClip.end());
+            tailor.AddToPolygonSetA(monotonicClip.begin(), monotonicClip.end());
         }
 
         // 执行
@@ -230,7 +230,7 @@ namespace tailor_visualization {
             if (!polygonEdges.empty()) {
                 resultPolygons.push_back(polygonEdges);
             }
-        };
+            };
 
         // 将 IFillType 转换为 FillTypeVariant
         auto fillTypeVariant = ToFillTypeVariant(fillType);
@@ -240,19 +240,19 @@ namespace tailor_visualization {
             using FillType = std::decay_t<decltype(type)>;
 
             if (useInnerFirst) {
-                tailor::OnlyClipPattern<FillType, tailor::ConnectTypeInnerFirst> pattern;
+                tailor::PolygonSetAPattern<FillType, tailor::ConnectTypeInnerFirst> pattern;
                 auto polytree = pattern.Stitch(drafting);
                 for (const auto& tree : polytree) {
                     ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                 }
             } else {
-                tailor::OnlyClipPattern<FillType, tailor::ConnectTypeOuterFirst> pattern;
+                tailor::PolygonSetAPattern<FillType, tailor::ConnectTypeOuterFirst> pattern;
                 auto polytree = pattern.Stitch(drafting);
                 for (const auto& tree : polytree) {
                     ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                 }
             }
-        }, fillTypeVariant.variant);
+            }, fillTypeVariant.variant);
 
         return resultPolygons;
     }
@@ -271,6 +271,18 @@ namespace tailor_visualization {
         if (subjectPolygons_.empty()) {
             return {};
         }
+        qDebug() << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
+
+        for (const auto& subjectPoly : subjectPolygons_) {
+            for (const auto& edge : subjectPoly) {
+                qDebug() << qSetRealNumberPrecision(18) <<
+                    edge.Point0().x << " " <<
+                    edge.Point0().y << " " <<
+                    edge.Point1().x << " " <<
+                    edge.Point1().y << " " <<
+                    edge.Bulge();
+            }
+        }
 
         // 创建 tailor
         ArcTailor tailor(arcAnalysis_);
@@ -278,7 +290,7 @@ namespace tailor_visualization {
         // 添加 Subject 集合的多边形
         for (const auto& subjectPoly : subjectPolygons_) {
             auto monotonicSubject = SplitToMonotonic(subjectPoly);
-            tailor.AddSubject(monotonicSubject.begin(), monotonicSubject.end());
+            tailor.AddToPolygonSetB(monotonicSubject.begin(), monotonicSubject.end());
         }
 
         // 执行
@@ -290,20 +302,20 @@ namespace tailor_visualization {
             [&](const tailor::Polygon<tailor::PolyEdgeInfo>& poly) -> void {
             std::vector<Arc> polygonEdges;
             for (const auto& edge_info : poly.edges) {
-                if (edge_info.type == tailor::BoundaryType::UpperBoundary) { 
+                if (edge_info.type == tailor::BoundaryType::UpperBoundary) {
                     // 需要反转边
                     const auto& edge = drafting.edgeEvent[edge_info.id].edge;
                     Arc reversedEdge(edge.Point1(), edge.Point0(), -edge.Bulge(), edge.Data());
                     polygonEdges.push_back(reversedEdge);
                 } else {
                     const auto& edge = drafting.edgeEvent[edge_info.id].edge;
-                    polygonEdges.push_back(edge); 
+                    polygonEdges.push_back(edge);
                 }
             }
             if (!polygonEdges.empty()) {
                 resultPolygons.push_back(polygonEdges);
             }
-        };
+            };
 
         // 将 IFillType 转换为 FillTypeVariant
         auto fillTypeVariant = ToFillTypeVariant(fillType);
@@ -313,19 +325,19 @@ namespace tailor_visualization {
             using FillType = std::decay_t<decltype(type)>;
 
             if (useInnerFirst) {
-                tailor::OnlySubjectPattern<FillType, tailor::ConnectTypeInnerFirst> pattern;
+                tailor::PolygonSetBPattern<FillType, tailor::ConnectTypeInnerFirst> pattern;
                 auto polytree = pattern.Stitch(drafting);
                 for (const auto& tree : polytree) {
                     ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                 }
             } else {
-                tailor::OnlySubjectPattern<FillType, tailor::ConnectTypeOuterFirst> pattern;
+                tailor::PolygonSetBPattern<FillType, tailor::ConnectTypeOuterFirst> pattern;
                 auto polytree = pattern.Stitch(drafting);
                 for (const auto& tree : polytree) {
                     ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                 }
             }
-        }, fillTypeVariant.variant);
+            }, fillTypeVariant.variant);
 
         return resultPolygons;
     }
@@ -342,13 +354,13 @@ namespace tailor_visualization {
         // 添加所有Clip多边形（需要分割为单调弧段）
         for (const auto& clipPoly : clipPolygons_) {
             auto monotonicClip = SplitToMonotonic(clipPoly);
-            tailor.AddClipper(monotonicClip.begin(), monotonicClip.end());
+            tailor.AddToPolygonSetA(monotonicClip.begin(), monotonicClip.end());
         }
 
         // 添加所有Subject多边形（需要分割为单调弧段）
         for (const auto& subjectPoly : subjectPolygons_) {
             auto monotonicSubject = SplitToMonotonic(subjectPoly);
-            tailor.AddSubject(monotonicSubject.begin(), monotonicSubject.end());
+            tailor.AddToPolygonSetB(monotonicSubject.begin(), monotonicSubject.end());
         }
 
         // 执行并返回drafting
@@ -387,7 +399,7 @@ namespace tailor_visualization {
             if (!polygonEdges.empty()) {
                 resultPolygons.push_back(polygonEdges);
             }
-        };
+            };
 
         // 转换FillType到FillTypeVariant
         auto clipVariant = ToFillTypeVariant(clipFillType);
@@ -400,50 +412,50 @@ namespace tailor_visualization {
             using SubjectType = std::decay_t<decltype(subjectType)>;
 
             switch (operation) {
-                case BooleanOperation::Union: {
-                    tailor::UnionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                    break;
+            case BooleanOperation::Union: {
+                tailor::UnionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                auto polytree = pattern.Stitch(drafting);
+                for (const auto& tree : polytree) {
+                    ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                 }
-                case BooleanOperation::Intersection: {
-                    tailor::IntersectionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                    break;
+                break;
+            }
+            case BooleanOperation::Intersection: {
+                tailor::IntersectionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                auto polytree = pattern.Stitch(drafting);
+                for (const auto& tree : polytree) {
+                    ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                 }
-                case BooleanOperation::Difference: {
-                    tailor::DifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                    break;
+                break;
+            }
+            case BooleanOperation::Difference: {
+                tailor::DifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                auto polytree = pattern.Stitch(drafting);
+                for (const auto& tree : polytree) {
+                    ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                 }
-                case BooleanOperation::XOR: {
-                    tailor::SymmetricDifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                    break;
+                break;
+            }
+            case BooleanOperation::XOR: {
+                tailor::SymmetricDifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                auto polytree = pattern.Stitch(drafting);
+                for (const auto& tree : polytree) {
+                    ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                 }
-                default:
-                    break;
+                break;
+            }
+            default:
+                break;
             }
             return resultPolygons;
-        };
+            };
 
         // 使用 std::visit 双重分发
         resultPolygons = std::visit([&](auto&& clipType) {
             return std::visit([&](auto&& subjectType) {
                 return executePattern(clipType, subjectType);
-            }, subjectVariant.variant);
-        }, clipVariant.variant);
+                }, subjectVariant.variant);
+            }, clipVariant.variant);
 
 
         return resultPolygons;
@@ -477,7 +489,7 @@ namespace tailor_visualization {
             if (!polygonEdges.empty()) {
                 resultPolygons.push_back(polygonEdges);
             }
-        };
+            };
 
         // 转换FillType到FillTypeVariant
         auto clipVariant = ToFillTypeVariant(clipFillType);
@@ -497,82 +509,82 @@ namespace tailor_visualization {
             using SubjectType = std::decay_t<decltype(subjectType)>;
 
             switch (operation) {
-                case BooleanOperation::Union: {
-                    if (useInnerFirst) {
-                        tailor::UnionPattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                        }
-                    } else {
-                        tailor::UnionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                        }
+            case BooleanOperation::Union: {
+                if (useInnerFirst) {
+                    tailor::UnionPattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                     }
-                    break;
-                }
-                case BooleanOperation::Intersection: {
-                    if (useInnerFirst) {
-                        tailor::IntersectionPattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                        }
-                    } else {
-                        tailor::IntersectionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                        }
+                } else {
+                    tailor::UnionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                     }
-                    break;
                 }
-                case BooleanOperation::Difference: {
-                    if (useInnerFirst) {
-                        tailor::DifferencePattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                        }
-                    } else {
-                        tailor::DifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                        }
+                break;
+            }
+            case BooleanOperation::Intersection: {
+                if (useInnerFirst) {
+                    tailor::IntersectionPattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                     }
-                    break;
-                }
-                case BooleanOperation::XOR: {
-                    if (useInnerFirst) {
-                        tailor::SymmetricDifferencePattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                        }
-                    } else {
-                        tailor::SymmetricDifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                        }
+                } else {
+                    tailor::IntersectionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
                     }
-                    break;
                 }
-                default:
-                    break;
+                break;
+            }
+            case BooleanOperation::Difference: {
+                if (useInnerFirst) {
+                    tailor::DifferencePattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+                    }
+                } else {
+                    tailor::DifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+                    }
+                }
+                break;
+            }
+            case BooleanOperation::XOR: {
+                if (useInnerFirst) {
+                    tailor::SymmetricDifferencePattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+                    }
+                } else {
+                    tailor::SymmetricDifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+                    }
+                }
+                break;
+            }
+            default:
+                break;
             }
             return resultPolygons;
-        };
+            };
 
         // 使用 std::visit 双重分发
         resultPolygons = std::visit([&](auto&& clipType) {
             return std::visit([&](auto&& subjectType) {
                 return executePattern(clipType, subjectType);
-            }, subjectVariant.variant);
-        }, clipVariant.variant);
+                }, subjectVariant.variant);
+            }, clipVariant.variant);
 
 
         return resultPolygons;
@@ -581,8 +593,7 @@ namespace tailor_visualization {
     std::vector<Arc> BooleanOperations::SplitToMonotonic(const std::vector<Arc>& arcs) {
         std::vector<Arc> result;
         for (const auto& arc : arcs) {
-            auto splitArcs = arcAnalysis_.SplitToMonotonic2(arc);
-            result.insert(result.end(), splitArcs.begin(), splitArcs.end());
+            arcAnalysis_.SplitToMonotonic(arc, std::back_inserter(result));
         }
         return result;
     }
@@ -619,38 +630,38 @@ namespace tailor_visualization {
             if (!polygonEdges.empty()) {
                 resultPolygons.push_back(polygonEdges);
             }
-        };
+            };
 
         // 根据 fillType 选择正确的 Pattern
         switch (fillType) {
-            case 0: // NonZeroFillType
-                {
-                    tailor::UnionPattern<tailor::NonZeroFillType, tailor::NonZeroFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
-            case 1: // EvenOddFillType
-            default:
-                {
-                    tailor::UnionPattern<tailor::EvenOddFillType, tailor::EvenOddFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
-            case 2: // IgnoreFillType
-                {
-                    tailor::UnionPattern<tailor::IgnoreFillType, tailor::IgnoreFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
+        case 0: // NonZeroFillType
+        {
+            tailor::UnionPattern<tailor::NonZeroFillType, tailor::NonZeroFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
+        case 1: // EvenOddFillType
+        default:
+        {
+            tailor::UnionPattern<tailor::EvenOddFillType, tailor::EvenOddFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
+        case 2: // IgnoreFillType
+        {
+            tailor::UnionPattern<tailor::IgnoreFillType, tailor::IgnoreFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
         }
 
         return resultPolygons;
@@ -677,38 +688,38 @@ namespace tailor_visualization {
             if (!polygonEdges.empty()) {
                 resultPolygons.push_back(polygonEdges);
             }
-        };
+            };
 
         // 根据 fillType 选择正确的 Pattern
         switch (fillType) {
-            case 0: // NonZeroFillType
-                {
-                    tailor::IntersectionPattern<tailor::NonZeroFillType, tailor::NonZeroFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
-            case 1: // EvenOddFillType
-            default:
-                {
-                    tailor::IntersectionPattern<tailor::EvenOddFillType, tailor::EvenOddFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
-            case 2: // IgnoreFillType
-                {
-                    tailor::IntersectionPattern<tailor::IgnoreFillType, tailor::IgnoreFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
+        case 0: // NonZeroFillType
+        {
+            tailor::IntersectionPattern<tailor::NonZeroFillType, tailor::NonZeroFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
+        case 1: // EvenOddFillType
+        default:
+        {
+            tailor::IntersectionPattern<tailor::EvenOddFillType, tailor::EvenOddFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
+        case 2: // IgnoreFillType
+        {
+            tailor::IntersectionPattern<tailor::IgnoreFillType, tailor::IgnoreFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
         }
 
         return resultPolygons;
@@ -735,38 +746,38 @@ namespace tailor_visualization {
             if (!polygonEdges.empty()) {
                 resultPolygons.push_back(polygonEdges);
             }
-        };
+            };
 
         // 根据 fillType 选择正确的 Pattern
         switch (fillType) {
-            case 0: // NonZeroFillType
-                {
-                    tailor::DifferencePattern<tailor::NonZeroFillType, tailor::NonZeroFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
-            case 1: // EvenOddFillType
-            default:
-                {
-                    tailor::DifferencePattern<tailor::EvenOddFillType, tailor::EvenOddFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
-            case 2: // IgnoreFillType
-                {
-                    tailor::DifferencePattern<tailor::IgnoreFillType, tailor::IgnoreFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
+        case 0: // NonZeroFillType
+        {
+            tailor::DifferencePattern<tailor::NonZeroFillType, tailor::NonZeroFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
+        case 1: // EvenOddFillType
+        default:
+        {
+            tailor::DifferencePattern<tailor::EvenOddFillType, tailor::EvenOddFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
+        case 2: // IgnoreFillType
+        {
+            tailor::DifferencePattern<tailor::IgnoreFillType, tailor::IgnoreFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
         }
 
         return resultPolygons;
@@ -793,38 +804,38 @@ namespace tailor_visualization {
             if (!polygonEdges.empty()) {
                 resultPolygons.push_back(polygonEdges);
             }
-        };
+            };
 
         // 根据 fillType 选择正确的 Pattern
         switch (fillType) {
-            case 0: // NonZeroFillType
-                {
-                    tailor::SymmetricDifferencePattern<tailor::NonZeroFillType, tailor::NonZeroFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
-            case 1: // EvenOddFillType
-            default:
-                {
-                    tailor::SymmetricDifferencePattern<tailor::EvenOddFillType, tailor::EvenOddFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
-            case 2: // IgnoreFillType
-                {
-                    tailor::SymmetricDifferencePattern<tailor::IgnoreFillType, tailor::IgnoreFillType, tailor::ConnectTypeOuterFirst> pattern;
-                    auto polytree = pattern.Stitch(drafting);
-                    for (const auto& tree : polytree) {
-                        ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
-                    }
-                }
-                break;
+        case 0: // NonZeroFillType
+        {
+            tailor::SymmetricDifferencePattern<tailor::NonZeroFillType, tailor::NonZeroFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
+        case 1: // EvenOddFillType
+        default:
+        {
+            tailor::SymmetricDifferencePattern<tailor::EvenOddFillType, tailor::EvenOddFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
+        case 2: // IgnoreFillType
+        {
+            tailor::SymmetricDifferencePattern<tailor::IgnoreFillType, tailor::IgnoreFillType, tailor::ConnectTypeOuterFirst> pattern;
+            auto polytree = pattern.Stitch(drafting);
+            for (const auto& tree : polytree) {
+                ForEachPolyTree<tailor::PolyEdgeInfo>(tree, fun);
+            }
+        }
+        break;
         }
 
         return resultPolygons;
@@ -891,35 +902,35 @@ namespace tailor_visualization {
             default:
                 return tailor::BoundaryType::Outside;
             }
-        };
+            };
 
         // 3. 计算每条边的边界类型
         for (const auto& edge : edges) {
             if (!edge.end) continue;
 
             tailor::EdgeGroupFillStatus status;
-            status.clipper.wind = edge.clipperWind;
-            status.clipper.positive = 0;
-            status.clipper.negitive = 0;
-            status.subject.wind = edge.subjectWind;
-            status.subject.positive = 0;
-            status.subject.negitive = 0;
+            status.polygonSetA.wind = edge.windA;
+            status.polygonSetA.positive = 0;
+            status.polygonSetA.negitive = 0;
+            status.polygonSetB.wind = edge.windB;
+            status.polygonSetB.positive = 0;
+            status.polygonSetB.negitive = 0;
 
             // 统计正向和负向边
             if (edge.aggregatedEdges) {
                 for (auto id : edge.aggregatedEdges->sourceEdges) {
                     const auto& srcEdge = drafting.edgeEvent[id];
-                    if (srcEdge.isClipper) {
-                        srcEdge.reversed ? (++status.clipper.negitive) : (++status.clipper.positive);
+                    if (!srcEdge.isPolygonSetB) {
+                        srcEdge.reversed ? (++status.polygonSetA.negitive) : (++status.polygonSetA.positive);
                     } else {
-                        srcEdge.reversed ? (++status.subject.negitive) : (++status.subject.positive);
+                        srcEdge.reversed ? (++status.polygonSetB.negitive) : (++status.polygonSetB.positive);
                     }
                 }
             }
 
             // 计算边界类型
-            auto subjectBoundary = (*subjectFillType)(status.subject);
-            auto clipperBoundary = (*clipFillType)(status.clipper);
+            auto subjectBoundary = (*subjectFillType)(status.polygonSetB);
+            auto clipperBoundary = (*clipFillType)(status.polygonSetA);
             auto resultBoundary = boolOperation(subjectBoundary, clipperBoundary);
 
             types[edge.id] = resultBoundary;
@@ -956,8 +967,8 @@ namespace tailor_visualization {
 
     template<typename T>
     void BooleanOperations::ForEachPolyTreeWithDepth(const tailor::PolyTree<T>& tree,
-                                 int depth,
-                                 const std::function<void(const typename tailor::PolyTree<T>::PolygonType&, int)>& callback) const {
+        int depth,
+        const std::function<void(const typename tailor::PolyTree<T>::PolygonType&, int)>& callback) const {
         if (callback) {
             callback(tree.polygon, depth);
         }
@@ -1003,7 +1014,7 @@ namespace tailor_visualization {
         // 添加 Clip 集合的多边形
         for (const auto& clipPoly : clipPolygons_) {
             auto monotonicClip = SplitToMonotonic(clipPoly);
-            tailor.AddClipper(monotonicClip.begin(), monotonicClip.end());
+            tailor.AddToPolygonSetA(monotonicClip.begin(), monotonicClip.end());
         }
 
         // 执行
@@ -1028,9 +1039,9 @@ namespace tailor_visualization {
             if (!polygonEdges.empty()) {
                 // 判断是否为内环：偶数层为内环
                 bool isHole = (depth % 2 == 1);
-                resultPolygons.push_back({polygonEdges, isHole});
+                resultPolygons.push_back({ polygonEdges, isHole });
             }
-        };
+            };
 
         // 将 IFillType 转换为 FillTypeVariant
         auto fillTypeVariant = ToFillTypeVariant(fillType);
@@ -1040,19 +1051,19 @@ namespace tailor_visualization {
             using FillType = std::decay_t<decltype(type)>;
 
             if (useInnerFirst) {
-                tailor::OnlyClipPattern<FillType, tailor::ConnectTypeInnerFirst> pattern;
+                tailor::PolygonSetAPattern<FillType, tailor::ConnectTypeInnerFirst> pattern;
                 auto polytree = pattern.Stitch(drafting);
                 for (const auto& tree : polytree) {
                     ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
                 }
             } else {
-                tailor::OnlyClipPattern<FillType, tailor::ConnectTypeOuterFirst> pattern;
+                tailor::PolygonSetAPattern<FillType, tailor::ConnectTypeOuterFirst> pattern;
                 auto polytree = pattern.Stitch(drafting);
                 for (const auto& tree : polytree) {
                     ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
                 }
             }
-        }, fillTypeVariant.variant);
+            }, fillTypeVariant.variant);
 
         return resultPolygons;
     }
@@ -1078,7 +1089,7 @@ namespace tailor_visualization {
         // 添加 Subject 集合的多边形
         for (const auto& subjectPoly : subjectPolygons_) {
             auto monotonicSubject = SplitToMonotonic(subjectPoly);
-            tailor.AddSubject(monotonicSubject.begin(), monotonicSubject.end());
+            tailor.AddToPolygonSetB(monotonicSubject.begin(), monotonicSubject.end());
         }
 
         // 执行
@@ -1103,9 +1114,9 @@ namespace tailor_visualization {
             if (!polygonEdges.empty()) {
                 // 判断是否为内环：偶数层为内环
                 bool isHole = (depth % 2 == 1);
-                resultPolygons.push_back({polygonEdges, isHole});
+                resultPolygons.push_back({ polygonEdges, isHole });
             }
-        };
+            };
 
         // 将 IFillType 转换为 FillTypeVariant
         auto fillTypeVariant = ToFillTypeVariant(fillType);
@@ -1115,19 +1126,19 @@ namespace tailor_visualization {
             using FillType = std::decay_t<decltype(type)>;
 
             if (useInnerFirst) {
-                tailor::OnlySubjectPattern<FillType, tailor::ConnectTypeInnerFirst> pattern;
+                tailor::PolygonSetBPattern<FillType, tailor::ConnectTypeInnerFirst> pattern;
                 auto polytree = pattern.Stitch(drafting);
                 for (const auto& tree : polytree) {
                     ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
                 }
             } else {
-                tailor::OnlySubjectPattern<FillType, tailor::ConnectTypeOuterFirst> pattern;
+                tailor::PolygonSetBPattern<FillType, tailor::ConnectTypeOuterFirst> pattern;
                 auto polytree = pattern.Stitch(drafting);
                 for (const auto& tree : polytree) {
                     ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
                 }
             }
-        }, fillTypeVariant.variant);
+            }, fillTypeVariant.variant);
 
         return resultPolygons;
     }
@@ -1144,20 +1155,20 @@ namespace tailor_visualization {
         if (clipPolygons_.empty() && subjectPolygons_.empty()) {
             return {};
         }
-        
+
         // 创建裁剪器
         ArcTailor tailor(arcAnalysis_);
 
         // 添加所有Clip多边形（裁剪多边形）并分割为单调弧段
         for (const auto& clipPoly : clipPolygons_) {
             auto monotonicClip = SplitToMonotonic(clipPoly);
-            tailor.AddClipper(monotonicClip.begin(), monotonicClip.end());
+            tailor.AddToPolygonSetA(monotonicClip.begin(), monotonicClip.end());
         }
 
         // 添加所有Subject多边形（被裁剪多边形）并分割为单调弧段
         for (const auto& subjectPoly : subjectPolygons_) {
             auto monotonicSubject = SplitToMonotonic(subjectPoly);
-            tailor.AddSubject(monotonicSubject.begin(), monotonicSubject.end());
+            tailor.AddToPolygonSetB(monotonicSubject.begin(), monotonicSubject.end());
         }
 
         // 执行裁剪
@@ -1181,9 +1192,9 @@ namespace tailor_visualization {
             if (!polygonEdges.empty()) {
                 // 判断是否为内环：偶数层为内环
                 bool isHole = (depth % 2 == 1);
-                resultPolygons.push_back({polygonEdges, isHole});
+                resultPolygons.push_back({ polygonEdges, isHole });
             }
-        };
+            };
 
         // 转换FillType到FillTypeVariant
         auto clipVariant = ToFillTypeVariant(clipFillType);
@@ -1202,81 +1213,81 @@ namespace tailor_visualization {
             using SubjectType = std::decay_t<decltype(subjectType)>;
 
             switch (operation) {
-                case BooleanOperation::Union: {
-                    if (useInnerFirst) {
-                        tailor::UnionPattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
-                        }
-                    } else {
-                        tailor::UnionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
-                        }
+            case BooleanOperation::Union: {
+                if (useInnerFirst) {
+                    tailor::UnionPattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
                     }
-                    break;
-                }
-                case BooleanOperation::Intersection: {
-                    if (useInnerFirst) {
-                        tailor::IntersectionPattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
-                        }
-                    } else {
-                        tailor::IntersectionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
-                        }
+                } else {
+                    tailor::UnionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
                     }
-                    break;
                 }
-                case BooleanOperation::Difference: {
-                    if (useInnerFirst) {
-                        tailor::DifferencePattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
-                        }
-                    } else {
-                        tailor::DifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
-                        }
-                    }
-                    break;
-                }
-                case BooleanOperation::XOR: {
-                    if (useInnerFirst) {
-                        tailor::SymmetricDifferencePattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
-                        }
-                    } else {
-                        tailor::SymmetricDifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
-                        auto polytree = pattern.Stitch(drafting);
-                        for (const auto& tree : polytree) {
-                            ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
-                        }
-                    }
-                    break;
-                }
-                default:
-                    break;
+                break;
             }
-        };
+            case BooleanOperation::Intersection: {
+                if (useInnerFirst) {
+                    tailor::IntersectionPattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
+                    }
+                } else {
+                    tailor::IntersectionPattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
+                    }
+                }
+                break;
+            }
+            case BooleanOperation::Difference: {
+                if (useInnerFirst) {
+                    tailor::DifferencePattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
+                    }
+                } else {
+                    tailor::DifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
+                    }
+                }
+                break;
+            }
+            case BooleanOperation::XOR: {
+                if (useInnerFirst) {
+                    tailor::SymmetricDifferencePattern<SubjectType, ClipType, tailor::ConnectTypeInnerFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
+                    }
+                } else {
+                    tailor::SymmetricDifferencePattern<SubjectType, ClipType, tailor::ConnectTypeOuterFirst> pattern;
+                    auto polytree = pattern.Stitch(drafting);
+                    for (const auto& tree : polytree) {
+                        ForEachPolyTreeWithDepth<tailor::PolyEdgeInfo>(tree, 0, fun);
+                    }
+                }
+                break;
+            }
+            default:
+                break;
+            }
+            };
 
         // 使用 std::visit 双重分发
         std::visit([&](auto&& clipType) {
             return std::visit([&](auto&& subjectType) {
                 executePattern(clipType, subjectType);
-            }, subjectVariant.variant);
-        }, clipVariant.variant);
+                }, subjectVariant.variant);
+            }, clipVariant.variant);
 
         return resultPolygons;
     }

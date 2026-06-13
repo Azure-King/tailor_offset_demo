@@ -3,51 +3,13 @@
 #include <QWidget>
 #include <QGridLayout>
 #include <QFrame>
+#include <QLabel>
 #include <QComboBox>
-#include <QSpinBox>
-#include <memory>
-
+#include <QSlider>
+#include <vector>
 #include "BooleanOperations.h"
 
-// Forward declarations
-namespace tailor_visualization {
-    class IFillType;
-    class NonZeroFillTypeWrapper;
-    class EvenOddFillTypeWrapper;
-    class IgnoreFillTypeWrapper;
-    class SpecificWindingFillTypeWrapper;
-    class BooleanOperations;
-
-    // Forward declaration of ConnectType wrappers
-    template<typename Drafting>
-    class IConnectType;
-
-    template<typename Drafting>
-    class ConnectTypeOuterFirstWrapper;
-
-    template<typename Drafting>
-    class ConnectTypeInnerFirstWrapper;
-}
-
 class Sketch2DView;
-
-// Type alias for IConnectType Drafting parameter
-using AnalysisCore = tailor::ArcSegmentAnalyserCore<tailor_visualization::Arc, tailor::PrecisionCore<10>>;
-using ConnectTypeDrafting = tailor::Tailor<tailor_visualization::Arc, tailor::ArcAnalysis<tailor_visualization::Arc ,AnalysisCore>>::PatternDrafting;
-
-// Fill type enumeration for pattern operations
-enum class PatternFillType {
-    NonZero,            // Non-zero fill rule
-    EvenOdd,            // Even-odd fill rule
-    Ignore,             // Ignore fill rule
-    SpecificWinding     // Specific winding number
-};
-
-// Connect type enumeration for pattern operations
-enum class PatternConnectType {
-    OuterFirst,         // Connect outer first
-    InnerFirst          // Connect inner first
-};
 
 class FourViewContainer : public QWidget {
     Q_OBJECT
@@ -67,67 +29,35 @@ public:
     // Synchronize view state from main view to all views
     void synchronizeViews();
 
-    // 获取当前FillType的IFillType指针
-    const tailor_visualization::IFillType* getClipFillType() const;
-    const tailor_visualization::IFillType* getSubjectFillType() const;
-
-    // 获取当前ConnectType的IConnectType指针
-    const tailor_visualization::IConnectType<ConnectTypeDrafting>* getTopRightConnectType() const;
-    const tailor_visualization::IConnectType<ConnectTypeDrafting>* getBottomLeftConnectType() const;
-    const tailor_visualization::IConnectType<ConnectTypeDrafting>* getBottomRightConnectType() const;
-
 signals:
-    void booleanOperationTriggered(int operationIndex);
+    // 预留信号：曲线偏置操作触发
+    void offsetOperationTriggered(double distance);
+    void pipelineStepChanged(int step);
+
+private slots:
+    void runFullPipeline();
 
 private:
     void setupViews();
     void setupLayout();
-    void setupBooleanComboBox();
-    void setupFillTypeComboBoxes();
-    void setupConnectTypeComboBoxes();
-    void updateWindingSpinBoxStyle(QSpinBox* spinBox, int value);
+    void processSelfIntersection();
+    void processCurveOffset(double distance);
+    void processDeselfIntersection();
 
     Sketch2DView* m_mainView = nullptr;
     Sketch2DView* m_topRightView = nullptr;
     Sketch2DView* m_bottomLeftView = nullptr;
     Sketch2DView* m_bottomRightView = nullptr;
 
-    QFrame* m_frameBottomRight = nullptr;
-    QFrame* m_frameTopRight = nullptr;
-    QFrame* m_frameBottomLeft = nullptr;
+    // 流水线中间数据：存储弧段结果以便在步骤间传递
+    std::vector<std::vector<tailor_visualization::Arc>> m_mergedFillArcs;   // 自交处理+合并后的弧段
+    std::vector<std::vector<tailor_visualization::Arc>> m_mergedOffsetArcs; // 偏置+合并后的弧段
+
+    // 流水线控件
+    QComboBox* m_fillTypeCombo = nullptr;
+    QComboBox* m_connectTypeCombo = nullptr;
+    QSlider* m_offsetDistanceSlider = nullptr;
+    QLabel* m_offsetValueLabel = nullptr;
 
     QGridLayout* m_layout = nullptr;
-    QComboBox* m_booleanComboBox = nullptr;
-    // QComboBox* m_booleanFillTypeComboBox = nullptr; // 已移除，使用Clip和Subject视图的FillType
-    QComboBox* m_topRightFillTypeComboBox = nullptr;
-    QComboBox* m_bottomLeftFillTypeComboBox = nullptr;
-    QSpinBox* m_topRightWindingSpinBox = nullptr;
-    QSpinBox* m_bottomLeftWindingSpinBox = nullptr;
-    QComboBox* m_topRightConnectTypeComboBox = nullptr;
-    QComboBox* m_bottomLeftConnectTypeComboBox = nullptr;
-    QComboBox* m_bottomRightConnectTypeComboBox = nullptr;
-
-    PatternFillType m_topRightFillType = PatternFillType::NonZero;
-    PatternFillType m_bottomLeftFillType = PatternFillType::NonZero;
-    int m_topRightWinding = 1;  // 默认环绕数为1
-    int m_bottomLeftWinding = 1; // 默认环绕数为1
-    PatternConnectType m_topRightConnectType = PatternConnectType::OuterFirst;
-    PatternConnectType m_bottomLeftConnectType = PatternConnectType::OuterFirst;
-    PatternConnectType m_bottomRightConnectType = PatternConnectType::OuterFirst;
-    // PatternFillType m_booleanFillType = PatternFillType::EvenOdd; // 已移除，使用Clip和Subject视图的FillType
-
-    // Current boolean operation type (default: Union = 0)
-    int m_currentBooleanOperation = 0;
-
-    // FillType 实例（用于布尔运算视图）
-    std::unique_ptr<tailor_visualization::NonZeroFillTypeWrapper> m_nonZeroFillType;
-    std::unique_ptr<tailor_visualization::EvenOddFillTypeWrapper> m_evenOddFillType;
-    std::unique_ptr<tailor_visualization::IgnoreFillTypeWrapper> m_ignoreFillType;
-    std::unique_ptr<tailor_visualization::SpecificWindingFillTypeWrapper> m_specificWindingFillTypeTopRight;
-    std::unique_ptr<tailor_visualization::SpecificWindingFillTypeWrapper> m_specificWindingFillTypeBottomLeft;
-
-    // ConnectType 实例（用于布尔运算视图）
-    std::unique_ptr<tailor_visualization::ConnectTypeOuterFirstWrapper<ConnectTypeDrafting>> m_connectTypeOuterFirst;
-    std::unique_ptr<tailor_visualization::ConnectTypeInnerFirstWrapper<ConnectTypeDrafting>> m_connectTypeInnerFirst;
 };
-

@@ -6,18 +6,6 @@
 #include <QMenu>
 #include <QSet>
 #include <QColor>
-#include "BooleanOperations.h"
-
-// Type alias for IConnectType Drafting parameter
-using ArcPoint = tailor::Point<double>;
-using ArcSegment = tailor::ArcSegment<ArcPoint, double, QRgba64>;
-using ArcTailor2 = tailor::Tailor<ArcSegment, tailor::ArcAnalysis<ArcSegment, tailor::ArcSegmentAnalyserCore<ArcSegment, tailor::PrecisionCore<10>>>>;
-using ConnectTypeDrafting = ArcTailor2::PatternDrafting;
-
-// Forward declarations
-namespace tailor_visualization {
-    enum class BooleanOperation;
-}
 
 class Sketch2DView : public QWidget {
     Q_OBJECT
@@ -28,14 +16,7 @@ public:
         Polygon
     };
 
-    enum class ViewMode {
-        Normal,       // 正常视图，显示所有对象
-        ClipFocus,    // 侧重显示 Clip，Clip 填充蓝色，Subject 只显示红色边框
-        SubjectFocus, // 侧重显示 Subject，Subject 填充红色，Clip 只显示蓝色边框
-        BooleanResult // 显示布尔运算结果
-    };
-
-    // Public struct definitions (needed for public methods)
+    // Public struct definitions
     struct PolygonVertex {
         QPointF point;
         qreal bulge = 0.0;
@@ -54,16 +35,12 @@ public:
     void setTool(Tool tool);
     Tool tool() const { return m_tool; }
 
-    void setViewMode(ViewMode mode) { m_viewMode = mode; update(); }
-    ViewMode viewMode() const { return m_viewMode; }
-
     void setReadOnly(bool readOnly);
     bool isReadOnly() const { return m_readOnly; }
 
     void clear();
 
-    void setSelectedPolygon(int index, bool isPolygon = true);
-
+    void setSelectedPolygon(int index, bool isPolygon);
     int selectedPolygonIndex() const { return m_selectedPolygonIndex; }
 
     void clearSelection();
@@ -76,11 +53,6 @@ public:
 
     const QSet<int>& selectedPolygons() const { return m_selectedPolygons; }
     const QSet<int>& selectedPolylines() const { return m_selectedPolylines; }
-    
-    // 结果多边形高亮支持
-    void setHighlightedResult(int index);
-    void clearHighlightedResult();
-    int highlightedResultIndex() const { return m_highlightedResultIndex; }
 
     // Data access for view synchronization
     const QVector<Polyline>& polylines() const { return m_polylines; }
@@ -99,68 +71,30 @@ public:
     // 删除指定的多边形
     void deletePolygons(const QSet<int>& indices);
 
-    // Clip 和 Subject 集合管理
-    enum class BooleanRole {
-        None,
-        Clip,
-        Subject
-    };
-
-    void setPolygonRole(int index, BooleanRole role, bool isPolygon = true);
-    void setPolygonRoleBatch(const QSet<int>& indices, BooleanRole role, bool isPolygon);
-    BooleanRole polygonRole(int index, bool isPolygon = true) const;
-
-    const QSet<int>& clipPolygons() const { return m_clipPolygons; }
-    const QSet<int>& clipPolylines() const { return m_clipPolylines; }
-    const QSet<int>& subjectPolygons() const { return m_subjectPolygons; }
-    const QSet<int>& subjectPolylines() const { return m_subjectPolylines; }
-
-    // 设置 Clip/Subject 集合
-    void setClipPolygons(const QSet<int>& indices);
-    void setClipPolylines(const QSet<int>& indices);
-    void setSubjectPolygons(const QSet<int>& indices);
-    void setSubjectPolylines(const QSet<int>& indices);
-
-    // 布尔运算结果管理
-    struct BooleanResultPolygon {
+    // 偏置结果管理
+    struct OffsetResultPolygon {
         QVector<PolygonVertex> vertices;
-        QVector<QColor> edgeColors;  // 每条边的颜色
         QColor color;
-        bool isHole = false;  // 标识是否为内环（洞）
+        bool isHole = false;
     };
-    void setBooleanResults(const QVector<BooleanResultPolygon>& results);
-    const QVector<BooleanResultPolygon>& booleanResults() const { return m_booleanResults; }
-    void clearBooleanResults() { m_booleanResults.clear(); update(); }
+    void setOffsetResults(const QVector<OffsetResultPolygon>& results);
+    const QVector<OffsetResultPolygon>& offsetResults() const { return m_offsetResults; }
+    void clearOffsetResults() { m_offsetResults.clear(); update(); }
 
-    // Clip 和 Subject 原始多边形结果（使用 OnlyClipPattern 和 OnlySubjectPattern 处理）
-    void setClipPatternResults(const QVector<BooleanResultPolygon>& results);
-    const QVector<BooleanResultPolygon>& clipPatternResults() const { return m_clipPatternResults; }
-    void setSubjectPatternResults(const QVector<BooleanResultPolygon>& results);
-    const QVector<BooleanResultPolygon>& subjectPatternResults() const { return m_subjectPatternResults; }
+    // 自交处理结果管理
+    void setSelfIntersectionResults(const QVector<OffsetResultPolygon>& results);
+    const QVector<OffsetResultPolygon>& selfIntersectionResults() const { return m_selfIntersectionResults; }
+    void clearSelfIntersectionResults() { m_selfIntersectionResults.clear(); update(); }
 
-    // 执行布尔运算
-    void executeBooleanOperation(tailor_visualization::BooleanOperation operation, int fillType = 1); // 1: EvenOdd as default
-    void executeBooleanOperation(
-        tailor_visualization::BooleanOperation operation,
-        const tailor_visualization::IFillType* clipFillType,
-        const tailor_visualization::IFillType* subjectFillType);
-    void executeBooleanOperation(
-        tailor_visualization::BooleanOperation operation,
-        const tailor_visualization::IFillType* clipFillType,
-        const tailor_visualization::IFillType* subjectFillType,
-        const tailor_visualization::IConnectType<ConnectTypeDrafting>* connectType);
+    // 去自交结果管理
+    void setDeselfIntersectionResults(const QVector<OffsetResultPolygon>& results);
+    const QVector<OffsetResultPolygon>& deselfIntersectionResults() const { return m_deselfIntersectionResults; }
+    void clearDeselfIntersectionResults() { m_deselfIntersectionResults.clear(); update(); }
 
-    // 执行 Clip 和 Subject Pattern 计算
-    void executeClipPattern(const tailor_visualization::IFillType* fillType = nullptr);
-    void executeSubjectPattern(const tailor_visualization::IFillType* fillType = nullptr);
-
-    // 执行 Clip 和 Subject Pattern 计算（支持 ConnectType）
-    void executeClipPattern(
-        const tailor_visualization::IFillType* fillType,
-        const tailor_visualization::IConnectType<ConnectTypeDrafting>* connectType);
-    void executeSubjectPattern(
-        const tailor_visualization::IFillType* fillType,
-        const tailor_visualization::IConnectType<ConnectTypeDrafting>* connectType);
+    // 填充结果管理（第二视图用，不同多边形不同颜色）
+    void setFillResults(const QVector<OffsetResultPolygon>& results);
+    const QVector<OffsetResultPolygon>& fillResults() const { return m_fillResults; }
+    void clearFillResults() { m_fillResults.clear(); update(); }
 
     // Viewport state
     qreal scale() const { return m_scale; }
@@ -168,8 +102,6 @@ public:
     void setScale(qreal scale);
     void setOffset(const QPointF& offset);
 
-    // 导出多边形到文件用于调试
-    void debugExportPolygons(const QString& filename, const QSet<int>& indices, const QString& setName) const;
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -202,7 +134,7 @@ private:
 
     // 创建多边形的 QPainterPath
     QPainterPath createPolygonPath(const Polygon& poly) const;
-    QPainterPath createResultPolygonPath(const BooleanResultPolygon& poly) const;
+    QPainterPath createOffsetResultPath(const OffsetResultPolygon& poly) const;
 
     static qreal normalizedSpanDeg(qreal startDeg, qreal endDeg);
 
@@ -225,7 +157,6 @@ private:
     QRectF getWorldBounds() const;
 
     Tool m_tool = Tool::Polyline;
-    ViewMode m_viewMode = ViewMode::Normal;
 
     int m_polygonCounter = 0;
     int m_polylineCounter = 0;
@@ -237,19 +168,15 @@ private:
     QSet<int> m_selectedPolygons;   // 多边形的多选索引集合
     QSet<int> m_selectedPolylines;  // 多段线的多选索引集合
     int m_hoveredPolygonIndex = -1;  // 鼠标悬停的高亮多边形（只读模式下）
-    int m_hoveredResultIndex = -1;   // 鼠标悬停的高亮结果多边形（只读模式下）
-    int m_highlightedResultIndex = -1; // 手动选择的高亮结果多边形
 
-    // Clip 和 Subject 集合
-    QSet<int> m_clipPolygons;       // 加入 clip 的多边形
-    QSet<int> m_clipPolylines;      // 加入 clip 的多段线
-    QSet<int> m_subjectPolygons;   // 加入 subject 的多边形
-    QSet<int> m_subjectPolylines;  // 加入 subject 的多段线
-
-    // 布尔运算结果
-    QVector<BooleanResultPolygon> m_booleanResults;
-    QVector<BooleanResultPolygon> m_clipPatternResults;
-    QVector<BooleanResultPolygon> m_subjectPatternResults;
+    // 偏置结果
+    QVector<OffsetResultPolygon> m_offsetResults;
+    // 自交处理结果
+    QVector<OffsetResultPolygon> m_selfIntersectionResults;
+    // 去自交结果
+    QVector<OffsetResultPolygon> m_deselfIntersectionResults;
+    // 填充结果（第二视图用）
+    QVector<OffsetResultPolygon> m_fillResults;
 
     // Dragging state
     enum class DragMode {
@@ -297,5 +224,4 @@ signals:
     void polylineModified();
     void polygonModified();
     void polygonColorChanged(int polygonIndex, const QColor& color);
-    void polygonRoleChanged(int index, bool isPolygon);
 };
