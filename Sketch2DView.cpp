@@ -295,9 +295,12 @@ Sketch2DView::ResultEdgeLoc Sketch2DView::findNearbyResultEdge(const QPointF& sc
 				result.polygonIndex = pi;
 				result.edgeIndex = ei;
 				result.bulge = v1.bulge;
-				// 获取溯源 segmentId（从 edgeSegmentIds 数组中）
+				// 获取溯源 segmentId 和 sourceEdgeId
 				if (ei < poly.edgeSegmentIds.size()) {
 					result.segmentId = poly.edgeSegmentIds[ei];
+				}
+				if (ei < poly.edgeSourceEdgeIds.size()) {
+					result.sourceEdgeId = poly.edgeSourceEdgeIds[ei];
 				}
 				return result;
 			}
@@ -646,7 +649,8 @@ void Sketch2DView::mouseMoveEvent(QMouseEvent* event) {
         if (changed) {
             if (hovered.polygonIndex >= 0) {
                 m_hoveredResultEdge = hovered;
-                emit resultEdgeHovered(hovered.polygonIndex, hovered.edgeIndex, hovered.segmentId, hovered.bulge);
+                emit resultEdgeHovered(hovered.polygonIndex, hovered.edgeIndex,
+                    hovered.segmentId, hovered.sourceEdgeId, hovered.bulge);
             } else {
                 m_hoveredResultEdge = ResultEdgeLoc{};
                 emit resultEdgeHoverEnded();

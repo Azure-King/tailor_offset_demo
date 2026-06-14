@@ -13,15 +13,27 @@
 namespace tailor_visualization {
 
     /**
-     * @brief Arc 用户数据结构，包含颜色和线段ID标记
-     * 用于在布尔运算后识别同一原始曲线的分段，从而合并相邻的同ID弧段
+     * @brief Arc 用户数据结构，包含颜色、线段ID标记和溯源信息
+     * 
+     * 关系链设计：
+     * - sourceEdgeId: 原始输入边的全局索引，在 polygonToArcs 中设置后永不修改。
+     *   用于从流水线任一步骤的输出直接追溯到用户最初绘制的边，绕过布尔运算导致的 ID 变化。
+     * - segmentId:  当前阶段的合并标记，在流水线各阶段可能被重新分配。
+     *   用于 MergeAdjacentCurves 时将同一原始边分割产生的相邻小弧段合并。
+     * - edgeTag: 偏置边的类型标记（0=OffsetEdge, 1=JoinConvex, 2=JoinConcave），
+     *   由偏置器回调设置。MergeAdjacentCurves 会检查 edgeTag 防止跨类型合并。
      */
     struct ArcUserData {
         QRgba64 color;
-        int segmentId = -1;  // -1 表示无标记
+        int sourceEdgeId = -1; // 原始输入边的全局索引（关系链根节点，永不修改）
+        int segmentId = -1;    // 当前阶段的合并标记（可在各阶段重新分配）
+        int edgeTag = 0;       // 0=OffsetEdge, 1=JoinConvex, 2=JoinConcave
+        // 凸点连接弧对应的原始多边形顶点坐标（仅在 edgeTag==1 时有效）
+        double convexJoinVertexX = 0.0;
+        double convexJoinVertexY = 0.0;
 
-        ArcUserData() : color(), segmentId(-1) {}
-        ArcUserData(QRgba64 c, int id) : color(c), segmentId(id) {}
+        ArcUserData() : color(), sourceEdgeId(-1), segmentId(-1), edgeTag(0) {}
+        ArcUserData(QRgba64 c, int id) : color(c), sourceEdgeId(id), segmentId(id), edgeTag(0) {}
     };
 
     // 调试开关：设为 false 禁用相邻曲线合并
@@ -71,9 +83,13 @@ namespace tailor_visualization {
     }
 
     /**
-     * @brief 合并多边形中相邻的同ID弧段
-     * 将具有相同 segmentId（>=0）且几何兼容的连续弧段合并为单个弧段。
+     * @brief 合并多边形中相邻的同ID且同类型的弧段
+     * 将具有相同 segmentId（>=0）且相同 edgeTag 且几何兼容的连续弧段合并为单个弧段。
      * 用于消除布尔运算中单调分割产生的小线段。
+     * 
+     * 重要：edgeTag 必须匹配，防止偏置阶段产生的 OffsetEdge(segId=X, tag=0)
+     * 和 JoinConvex(segId=X, tag=1) 被错误合并，导致凸点连接弧的溯源标记丢失。
+     * 
      * @param arcs 输入弧段数组（构成一个闭合多边形）
      * @return 合并后的弧段数组
      */
@@ -87,9 +103,11 @@ namespace tailor_visualization {
             const auto& next = arcs[i];
             int curId = current.Data().segmentId;
             int nextId = next.Data().segmentId;
+            int curTag = current.Data().edgeTag;
+            int nextTag = next.Data().edgeTag;
 
-            // 相同有效ID且几何兼容 -> 合并
-            if (curId >= 0 && curId == nextId && CanMergeTwoArcs(current, next)) {
+            // 相同有效ID、相同edgeTag且几何兼容 -> 合并
+            if (curId >= 0 && curId == nextId && curTag == nextTag && CanMergeTwoArcs(current, next)) {
                 current = MergeTwoArcs(current, next);
             } else {
                 result.push_back(current);
@@ -104,7 +122,9 @@ namespace tailor_visualization {
             auto& last = result.back();
             int firstId = first.Data().segmentId;
             int lastId = last.Data().segmentId;
-            if (firstId >= 0 && firstId == lastId && CanMergeTwoArcs(last, first)) {
+            int firstTag = first.Data().edgeTag;
+            int lastTag = last.Data().edgeTag;
+            if (firstId >= 0 && firstId == lastId && firstTag == lastTag && CanMergeTwoArcs(last, first)) {
                 // 将尾部合并到头部（last→first），保持多边形闭合
                 result[0] = MergeTwoArcs(last, first);
                 result.pop_back();

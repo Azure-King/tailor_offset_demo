@@ -74,14 +74,17 @@ namespace tailor_offset {
 			JoinConcaveLine2  // 凹点连接：从原始顶点到偏置起点的直线段
 		};
 
-		/// 回调函数类型：当每条输出边生成时调用
-		/// sourceIndex: 对应的输入曲线索引
-		/// tag: 输出边类型
-		/// resultCurve: 生成的输出曲线
-		using TagCallback = std::function<void(int sourceIndex, EdgeTag tag, const CurveType& resultCurve)>;
+		/// 偏置边回调：sourceIndex=对应输入曲线索引，curve=生成的偏置曲线（可修改属性）
+		using OffsetEdgeCallback = std::function<void(int sourceIndex, CurveType& curve)>;
+		/// 凸点连接弧回调：sourceIndex=前一段曲线索引，joinVertex=凸点所在的原始顶点，curve=生成的凸点连接弧（可修改属性）
+		using JoinConvexCallback = std::function<void(int sourceIndex, const PointType& joinVertex, CurveType& curve)>;
+		/// 凹点连接线回调：sourceIndex=前一段曲线索引，lineIdx=0或1，curve=生成的连接线（可修改属性）
+		using JoinConcaveCallback = std::function<void(int sourceIndex, int lineIdx, CurveType& curve)>;
 
-		/// 静态回调，由外部设置
-		static TagCallback s_onEdgeTagged;
+		/// 分离的静态回调，由外部设置
+		static OffsetEdgeCallback s_onOffsetEdge;
+		static JoinConvexCallback s_onJoinConvex;
+		static JoinConcaveCallback s_onJoinConcave;
 
 		static ClosedResult OffsetClosed(
 			const std::vector<CurveType>& curves,
@@ -104,10 +107,11 @@ namespace tailor_offset {
 				size_t next = (i + 1) % n;
 
 				if (offsetCurves[i].has_value()) {
-					result.Push(offsetCurves[i].value());
-					if (s_onEdgeTagged) {
-						s_onEdgeTagged(static_cast<int>(i), EdgeTag::OffsetEdge, offsetCurves[i].value());
+					auto curve = offsetCurves[i].value();
+					if (s_onOffsetEdge) {
+						s_onOffsetEdge(static_cast<int>(i), curve);
 					}
+					result.Push(curve);
 				}
 
 				auto joinResult = OffsetJoin(
@@ -119,17 +123,17 @@ namespace tailor_offset {
 
 				bool joinIsConvex = (joinResult.Size() == 1);
 				int joinIdx = 0;
-				for (const auto& joinCurve : joinResult) {
-					result.Push(joinCurve);
-					if (s_onEdgeTagged) {
-						EdgeTag tag;
-						if (joinIsConvex) {
-							tag = EdgeTag::JoinConvex;
-						} else {
-							tag = (joinIdx == 0) ? EdgeTag::JoinConcaveLine1 : EdgeTag::JoinConcaveLine2;
-						}
-						s_onEdgeTagged(static_cast<int>(i), tag, joinCurve);
+				for (auto joinCurve : joinResult) {
+				if (joinIsConvex) {
+					if (s_onJoinConvex) {
+						s_onJoinConvex(static_cast<int>(i), curves[i].Point1(), joinCurve);
 					}
+					} else {
+						if (s_onJoinConcave) {
+							s_onJoinConcave(static_cast<int>(i), joinIdx, joinCurve);
+						}
+					}
+					result.Push(joinCurve);
 					++joinIdx;
 				}
 			}
@@ -365,7 +369,13 @@ namespace tailor_offset {
 	
 	// 静态回调成员定义（模板偏特化的静态成员）
 	template <typename PType, typename T, typename UserData>
-	typename CurveOffseter<tailor::ArcSegment<PType, T, UserData>, T>::TagCallback
-		CurveOffseter<tailor::ArcSegment<PType, T, UserData>, T>::s_onEdgeTagged;
+	typename CurveOffseter<tailor::ArcSegment<PType, T, UserData>, T>::OffsetEdgeCallback
+		CurveOffseter<tailor::ArcSegment<PType, T, UserData>, T>::s_onOffsetEdge;
+	template <typename PType, typename T, typename UserData>
+	typename CurveOffseter<tailor::ArcSegment<PType, T, UserData>, T>::JoinConvexCallback
+		CurveOffseter<tailor::ArcSegment<PType, T, UserData>, T>::s_onJoinConvex;
+	template <typename PType, typename T, typename UserData>
+	typename CurveOffseter<tailor::ArcSegment<PType, T, UserData>, T>::JoinConcaveCallback
+		CurveOffseter<tailor::ArcSegment<PType, T, UserData>, T>::s_onJoinConcave;
 
 } // namespace tailor_offset

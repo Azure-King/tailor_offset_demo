@@ -76,7 +76,10 @@ public:
         QVector<PolygonVertex> vertices;
         QColor color;
         bool isHole = false;
-        QVector<int> edgeSegmentIds; // 每条边的 segmentId，用于高亮溯源
+        QVector<int> edgeSegmentIds;       // 每条边的 segmentId（当前阶段的合并标记），用于高亮溯源
+        QVector<int> edgeSourceEdgeIds;    // 每条边的 sourceEdgeId（原始输入边索引，关系链根节点，永不变化）
+        QVector<int> edgeTags;             // 每条边的类型标签：0=OffsetEdge, 1=JoinConvex, 2=JoinConcave
+        QVector<QPointF> edgeConvexJoinVertices; // 凸点连接弧对应的原始顶点坐标（仅 edgeTag==1 时有效）
     };
     void setOffsetResults(const QVector<OffsetResultPolygon>& results);
     const QVector<OffsetResultPolygon>& offsetResults() const { return m_offsetResults; }
@@ -161,10 +164,11 @@ private:
     Edge findNearbyVertex(const QPointF& pos, qreal threshold = 8.0) const;
     // 查找附近的结果边（deselfIntersectionResults）
     struct ResultEdgeLoc {
-        int polygonIndex = -1;  // 结果多边形索引
-        int edgeIndex = -1;     // 边索引
-        int segmentId = -1;     // 溯源 segmentId
-        qreal bulge = 0.0;      // 该边的 bulge 值（用于区分凸点弧/弧偏置弧）
+        int polygonIndex = -1;     // 结果多边形索引
+        int edgeIndex = -1;        // 边索引
+        int segmentId = -1;        // 溯源 segmentId（当前阶段合并标记）
+        int sourceEdgeId = -1;     // 溯源 sourceEdgeId（原始输入边索引，关系链根节点）
+        qreal bulge = 0.0;         // 该边的 bulge 值（用于区分凸点弧/弧偏置弧）
     };
     ResultEdgeLoc findNearbyResultEdge(const QPointF& screenPos, qreal threshold = 12.0) const;
     // 点到线/弧的最近距离（世界坐标）
@@ -249,7 +253,7 @@ signals:
     void polylineModified();
     void polygonModified();
     void polygonColorChanged(int polygonIndex, const QColor& color);
-    // 结果边悬停信号：polygonIndex（结果数组中索引），edgeIndex（边索引），segmentId（溯源ID），bulge（弧凸度）
-    void resultEdgeHovered(int polygonIndex, int edgeIndex, int segmentId, qreal bulge);
+    // 结果边悬停信号：polygonIndex, edgeIndex, segmentId（当前阶段标记）, sourceEdgeId（关系链根节点）, bulge
+    void resultEdgeHovered(int polygonIndex, int edgeIndex, int segmentId, int sourceEdgeId, qreal bulge);
     void resultEdgeHoverEnded();
 };
