@@ -294,6 +294,7 @@ Sketch2DView::ResultEdgeLoc Sketch2DView::findNearbyResultEdge(const QPointF& sc
 			if (distToEdge >= 0 && distToEdge <= screenThreshold) {
 				result.polygonIndex = pi;
 				result.edgeIndex = ei;
+				result.bulge = v1.bulge;
 				// 获取溯源 segmentId（从 edgeSegmentIds 数组中）
 				if (ei < poly.edgeSegmentIds.size()) {
 					result.segmentId = poly.edgeSegmentIds[ei];
@@ -645,7 +646,7 @@ void Sketch2DView::mouseMoveEvent(QMouseEvent* event) {
         if (changed) {
             if (hovered.polygonIndex >= 0) {
                 m_hoveredResultEdge = hovered;
-                emit resultEdgeHovered(hovered.polygonIndex, hovered.edgeIndex, hovered.segmentId);
+                emit resultEdgeHovered(hovered.polygonIndex, hovered.edgeIndex, hovered.segmentId, hovered.bulge);
             } else {
                 m_hoveredResultEdge = ResultEdgeLoc{};
                 emit resultEdgeHoverEnded();
@@ -762,6 +763,45 @@ void Sketch2DView::paintEvent(QPaintEvent* event) {
     }
     painter.restore();
 
+    // 主视图：橙色轮廓（先渲染，被多边形填充/边线覆盖，仅露出外层轮廓）
+    if (!m_highlightedSourceSegmentIds.isEmpty() && !m_polygons.isEmpty()) {
+        painter.save();
+        painter.setBrush(Qt::NoBrush);
+
+        int cumulativeEdgeIdx = 0;
+        for (int pi = 0; pi < m_polygons.size(); ++pi) {
+            const auto& poly = m_polygons[pi];
+            int n = poly.vertices.size();
+
+            for (int ei = 0; ei < n; ++ei) {
+                int globalIdx = cumulativeEdgeIdx + ei;
+                if (!m_highlightedSourceSegmentIds.contains(globalIdx)) continue;
+
+                int next = (ei + 1) % n;
+                const auto& v1 = poly.vertices[ei];
+                const auto& v2 = poly.vertices[next];
+
+                QPen hlPen(QColor(255, 140, 0), 8 / m_scale);
+                hlPen.setCapStyle(Qt::RoundCap);
+                hlPen.setJoinStyle(Qt::RoundJoin);
+                painter.setPen(hlPen);
+                if (qAbs(v1.bulge) < 1e-6) {
+                    painter.drawLine(v1.point, v2.point);
+                } else {
+                    ArcSegment arc = arcSegmentFromBulge(v1.point, v2.point, v1.bulge);
+                    QPainterPath edgePath;
+                    const QRectF rect(arc.center.x() - arc.radius, arc.center.y() - arc.radius,
+                        arc.radius * 2.0, arc.radius * 2.0);
+                    edgePath.moveTo(v1.point);
+                    edgePath.arcTo(rect, arc.startAngleDeg, arc.spanAngleDeg);
+                    painter.drawPath(edgePath);
+                }
+            }
+            cumulativeEdgeIdx += n;
+        }
+        painter.restore();
+    }
+
     // Draw polygons
     painter.save();
     for (int i = 0; i < m_polygons.size(); ++i) {
@@ -847,69 +887,6 @@ void Sketch2DView::paintEvent(QPaintEvent* event) {
         }
     }
     painter.restore();
-
-    // 主视图：高亮与segmentId匹配的原始多边形边（用于偏置溯源） 未读
-    if (!m_highlightedSourceSegmentIds.isEmpty() && !m_polygons.isEmpty()) {
-        painter.save();
-        painter.setBrush(Qt::NoBrush);
-
-        int cumulativeEdgeIdx = 0;
-        for (int pi = 0; pi < m_polygons.size(); ++pi) {
-            const auto& poly = m_polygons[pi];
-            int n = poly.vertices.size();
-
-            for (int ei = 0; ei < n; ++ei) {
-                int globalIdx = cumulativeEdgeIdx + ei;
-                if (!m_highlightedSourceSegmentIds.contains(globalIdx)) continue;
-
-                int next = (ei + 1) % n;
-                const auto& v1 = poly.vertices[ei];
-                const auto& v2 = poly.vertices[next];
-
-                // 亮金色外边 + 内芯高亮
-                QPen outerPen(QColor(255, 215, 0, 100), 8 / m_scale);
-                outerPen.setCapStyle(Qt::RoundCap);
-                outerPen.setJoinStyle(Qt::RoundJoin);
-                painter.setPen(outerPen);
-
-                if (qAbs(v1.bulge) < 1e-6) {
-                    painter.drawLine(v1.point, v2.point);
-                } else {
-                    ArcSegment arc = arcSegmentFromBulge(v1.point, v2.point, v1.bulge);
-                    QPainterPath edgePath;
-                    const QRectF rect(arc.center.x() - arc.radius, arc.center.y() - arc.radius,
-                        arc.radius * 2.0, arc.radius * 2.0);
-                    edgePath.moveTo(v1.point);
-                    edgePath.arcTo(rect, arc.startAngleDeg, arc.spanAngleDeg);
-                    painter.drawPath(edgePath);
-                }
-
-                QPen innerPen(QColor(255, 215, 0), 4 / m_scale);
-                innerPen.setCapStyle(Qt::RoundCap);
-                innerPen.setJoinStyle(Qt::RoundJoin);
-                painter.setPen(innerPen);
-
-                if (qAbs(v1.bulge) < 1e-6) {
-                    painter.drawLine(v1.point, v2.point);
-                } else {
-                    ArcSegment arc = arcSegmentFromBulge(v1.point, v2.point, v1.bulge);
-                    QPainterPath edgePath;
-                    const QRectF rect(arc.center.x() - arc.radius, arc.center.y() - arc.radius,
-                        arc.radius * 2.0, arc.radius * 2.0);
-                    edgePath.moveTo(v1.point);
-                    edgePath.arcTo(rect, arc.startAngleDeg, arc.spanAngleDeg);
-                    painter.drawPath(edgePath);
-                }
-
-                // 端点小圆点标记
-                painter.setPen(Qt::NoPen);
-                painter.setBrush(QColor(255, 215, 0));
-                painter.drawEllipse(v1.point, 4 / m_scale, 4 / m_scale);
-            }
-            cumulativeEdgeIdx += n;
-        }
-        painter.restore();
-    }
 
     // Draw polyline vertices and edge midpoints (for editing)
     if (!m_readOnly) {
@@ -1257,6 +1234,17 @@ void Sketch2DView::paintEvent(QPaintEvent* event) {
 
             painter.restore();
         }
+    }
+
+    // 高亮源顶点（橙色圆点，凸点连接弧溯源，绘制在所有结果之上）
+    if (!m_highlightedVertices.isEmpty()) {
+        painter.save();
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(255, 140, 0));
+        for (const auto& pt : m_highlightedVertices) {
+            painter.drawEllipse(pt, 6 / m_scale, 6 / m_scale);
+        }
+        painter.restore();
     }
 
     // Reset transform for HUD
@@ -1660,5 +1648,15 @@ void Sketch2DView::setHighlightedSourceSegmentIds(const QSet<int>& segmentIds) {
 
 void Sketch2DView::clearHighlightedSourceSegmentIds() {
     m_highlightedSourceSegmentIds.clear();
+    update();
+}
+
+void Sketch2DView::setHighlightedVertices(const QVector<QPointF>& vertices) {
+    m_highlightedVertices = vertices;
+    update();
+}
+
+void Sketch2DView::clearHighlightedVertices() {
+    m_highlightedVertices.clear();
     update();
 }

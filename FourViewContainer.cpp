@@ -75,13 +75,92 @@ void FourViewContainer::setupViews() {
     connect(m_mainView, &Sketch2DView::polygonModified, this, &FourViewContainer::runFullPipeline);
     connect(m_mainView, &Sketch2DView::polygonColorChanged, this, &FourViewContainer::runFullPipeline);
 
-    // 第四视图偏置溯源交互：悬停偏置边时高亮对应的源边
-    connect(m_bottomRightView, &Sketch2DView::resultEdgeHovered, this, [this](int polygonIndex, int edgeIndex, int segmentId) {
-        Q_UNUSED(polygonIndex);
-        Q_UNUSED(edgeIndex);
-        // segmentId 现在是 fillResults 的本地唯一 ID（打断后的边）
+    // 第四视图偏置溯源交互：悬停偏置边时高亮对应的源边/顶点
+    connect(m_bottomRightView, &Sketch2DView::resultEdgeHovered, this, [this](int polygonIndex, int edgeIndex, int segmentId, qreal bulge) {
+        // segmentId 是 fillResults 的本地唯一 ID（打断后的边）
+        // bulge ≠ 0：可能是凸点连接弧或原始弧偏置弧
+        //
+        // 凸点连接弧判定：
+        // 1. 直线边（bulge==0）→ 不可能产生偏置弧 → 必然是凸点连接弧
+        // 2. 曲线边（bulge≠0）→ 结果多边形中偏移弧与凸点弧共享 segmentId，
+        //    用方向性区分：凸点弧在同段偏移弧之后（prev同ID，next不同ID）
+        //
+        if (qAbs(bulge) > 1e-6 && segmentId >= 0 && m_localToOriginalSegId.contains(segmentId)) {
+            int origEdgeIdx = m_localToOriginalSegId[segmentId];
+            int cumulativeEdges = 0;
+            bool isConvexJoin = false;
+            QVector<QPointF> sourceVertices;
 
-        // 第二三四视图：用本地 segmentId 匹配 fillResults 中的打断边
+            for (const auto& poly : m_mainView->polygons()) {
+                int n = poly.vertices.size();
+                if (origEdgeIdx >= cumulativeEdges && origEdgeIdx < cumulativeEdges + n) {
+                    int vertexIdx = origEdgeIdx - cumulativeEdges;
+                    int convexVertexIdx = (origEdgeIdx + 1) - cumulativeEdges;
+                    if (convexVertexIdx >= n) convexVertexIdx -= n;
+
+                    // 策略1：原始边为直线（bulge==0）→ 偏置弧必然是凸点连接弧
+                    if (qAbs(poly.vertices[vertexIdx].bulge) < 1e-6) {
+                        isConvexJoin = true;
+                    } else {
+                        // 策略2：原始边为曲线（bulge!=0），利用结果多边形相邻边的方向性判断
+                        // 结果多边形中，凸点连接弧总是出现同原始 ID 的偏移弧之后：
+                        //   偏移弧(segId=ei) → 凸点弧(segId=ei) → 下一段偏移弧(segId=ei+1)
+                        // 因此：prev同ID → 凸点弧；next同ID → 偏移弧（非凸点）；否则非凸点
+                        const auto& deselfRes = m_bottomRightView->deselfIntersectionResults();
+                        if (polygonIndex >= 0 && polygonIndex < deselfRes.size()) {
+                            const auto& resPoly = deselfRes[polygonIndex];
+                            int rn = resPoly.vertices.size();
+                            if (rn > 1 && edgeIndex < resPoly.edgeSegmentIds.size()) {
+                                int prevEi = (edgeIndex - 1 + rn) % rn;
+                                int prevLocal = (prevEi < resPoly.edgeSegmentIds.size())
+                                    ? resPoly.edgeSegmentIds[prevEi] : -1;
+                                int prevOrig = m_localToOriginalSegId.value(prevLocal, -1);
+                                int nextEi = (edgeIndex + 1) % rn;
+                                int nextLocal = (nextEi < resPoly.edgeSegmentIds.size())
+                                    ? resPoly.edgeSegmentIds[nextEi] : -1;
+                                int nextOrig = m_localToOriginalSegId.value(nextLocal, -1);
+                                bool prevSame = (prevOrig == origEdgeIdx);
+                                bool nextSame = (nextOrig == origEdgeIdx);
+
+                                // 方向性判定：只有 prev 同ID+next 不同ID 才是凸点弧
+                                // （凸点弧在同段偏移弧之后、下一段偏移弧之前）
+                                if (prevSame && !nextSame) {
+                                    isConvexJoin = true;
+                                }
+                                // !prevSame && nextSame → 偏移弧（非凸点）
+                                // 其余（两侧都同ID/都不同）→ 非凸点
+                            }
+                        }
+                    }
+
+                    if (isConvexJoin && convexVertexIdx >= 0 && convexVertexIdx < n)
+                        sourceVertices.append(poly.vertices[convexVertexIdx].point);
+                    break;
+                }
+                cumulativeEdges += n;
+            }
+
+            if (isConvexJoin && !sourceVertices.isEmpty()) {
+                // 凸点连接弧：清除所有边高亮，仅高亮源顶点
+                m_mainView->clearHighlightedSourceSegmentIds();
+                m_topRightView->clearHighlightedSourceSegmentIds();
+                m_bottomLeftView->clearHighlightedSourceSegmentIds();
+                m_bottomRightView->clearHighlightedSourceSegmentIds();
+
+                m_mainView->setHighlightedVertices(sourceVertices);
+                m_topRightView->setHighlightedVertices(sourceVertices);
+                m_bottomLeftView->setHighlightedVertices(sourceVertices);
+                m_bottomRightView->setHighlightedVertices(sourceVertices);
+                return;
+            }
+        }
+
+        // 非凸点弧（直线边/弧偏置弧）：使用 segmentId 高亮完整边
+        m_mainView->clearHighlightedVertices();
+        m_topRightView->clearHighlightedVertices();
+        m_bottomLeftView->clearHighlightedVertices();
+        m_bottomRightView->clearHighlightedVertices();
+
         QSet<int> localSegIds;
         if (segmentId >= 0) {
             localSegIds.insert(segmentId);
@@ -99,9 +178,13 @@ void FourViewContainer::setupViews() {
     });
     connect(m_bottomRightView, &Sketch2DView::resultEdgeHoverEnded, this, [this]() {
         m_mainView->clearHighlightedSourceSegmentIds();
+        m_mainView->clearHighlightedVertices();
         m_topRightView->clearHighlightedSourceSegmentIds();
+        m_topRightView->clearHighlightedVertices();
         m_bottomLeftView->clearHighlightedSourceSegmentIds();
+        m_bottomLeftView->clearHighlightedVertices();
         m_bottomRightView->clearHighlightedSourceSegmentIds();
+        m_bottomRightView->clearHighlightedVertices();
     });
 }
 

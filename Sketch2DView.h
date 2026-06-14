@@ -96,6 +96,10 @@ public:
     void setHighlightedSourceSegmentIds(const QSet<int>& segmentIds);
     void clearHighlightedSourceSegmentIds();
 
+    // 高亮源顶点（用于凸点连接弧溯源交互）
+    void setHighlightedVertices(const QVector<QPointF>& vertices);
+    void clearHighlightedVertices();
+
     // 填充结果管理（第二视图用，不同多边形不同颜色）
     void setFillResults(const QVector<OffsetResultPolygon>& results);
     const QVector<OffsetResultPolygon>& fillResults() const { return m_fillResults; }
@@ -160,6 +164,7 @@ private:
         int polygonIndex = -1;  // 结果多边形索引
         int edgeIndex = -1;     // 边索引
         int segmentId = -1;     // 溯源 segmentId
+        qreal bulge = 0.0;      // 该边的 bulge 值（用于区分凸点弧/弧偏置弧）
     };
     ResultEdgeLoc findNearbyResultEdge(const QPointF& screenPos, qreal threshold = 12.0) const;
     // 点到线/弧的最近距离（世界坐标）
@@ -187,6 +192,7 @@ private:
     // 结果边悬停状态
     ResultEdgeLoc m_hoveredResultEdge;            // 当前悬停的结果边
     QSet<int> m_highlightedSourceSegmentIds;       // 需要高亮的源边 segmentId 集合
+    QVector<QPointF> m_highlightedVertices;        // 需要高亮的源顶点（凸点弧溯源）
 
     // 偏置结果
     QVector<OffsetResultPolygon> m_offsetResults;
@@ -243,7 +249,7 @@ signals:
     void polylineModified();
     void polygonModified();
     void polygonColorChanged(int polygonIndex, const QColor& color);
-    // 结果边悬停信号：polygonIndex（结果数组中索引），edgeIndex（边索引），segmentId（溯源ID）
-    void resultEdgeHovered(int polygonIndex, int edgeIndex, int segmentId);
+    // 结果边悬停信号：polygonIndex（结果数组中索引），edgeIndex（边索引），segmentId（溯源ID），bulge（弧凸度）
+    void resultEdgeHovered(int polygonIndex, int edgeIndex, int segmentId, qreal bulge);
     void resultEdgeHoverEnded();
 };
