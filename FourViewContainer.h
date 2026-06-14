@@ -60,6 +60,7 @@ private:
     // 流水线控件
     QComboBox* m_fillTypeCombo = nullptr;
     QComboBox* m_connectTypeCombo = nullptr;
+    QComboBox* m_joinConvexStyleCombo = nullptr;
     QSlider* m_offsetDistanceSlider = nullptr;
     QLabel* m_offsetValueLabel = nullptr;
 

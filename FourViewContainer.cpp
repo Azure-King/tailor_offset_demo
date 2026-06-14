@@ -256,7 +256,7 @@ void FourViewContainer::setupLayout() {
     m_offsetDistanceSlider = new QSlider(Qt::Horizontal, overlayBottomLeft);
     m_offsetDistanceSlider->setRange(-100, 100);
     m_offsetDistanceSlider->setValue(10);
-    m_offsetDistanceSlider->setFixedWidth(160);
+    m_offsetDistanceSlider->setFixedWidth(140);
     ol3->addWidget(new QLabel("偏置:", overlayBottomLeft));
     ol3->addWidget(m_offsetDistanceSlider);
 
@@ -266,10 +266,22 @@ void FourViewContainer::setupLayout() {
     m_offsetValueLabel->setStyleSheet("color: #fff; font-weight: bold;");
     ol3->addWidget(m_offsetValueLabel);
 
+    // 凸角偏置方式
+    m_joinConvexStyleCombo = new QComboBox(overlayBottomLeft);
+    m_joinConvexStyleCombo->addItem("圆弧", 0);
+    m_joinConvexStyleCombo->addItem("延长 - 切向", 1);
+    m_joinConvexStyleCombo->addItem("延长 - 形状", 2);
+    m_joinConvexStyleCombo->setCurrentIndex(0);
+    ol3->addWidget(new QLabel("凸角:", overlayBottomLeft));
+    ol3->addWidget(m_joinConvexStyleCombo);
+
     connect(m_offsetDistanceSlider, &QSlider::valueChanged, this, [this](int val) {
         m_offsetValueLabel->setText(QString::number(val));
         runFullPipeline();
     });
+
+    connect(m_joinConvexStyleCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &FourViewContainer::runFullPipeline);
 
     overlayBottomLeft->adjustSize();
     overlayBottomLeft->move(8, 8);
@@ -425,6 +437,15 @@ void FourViewContainer::processCurveOffset(double distance) {
     // 直接使用 Arc 类型（带 ArcUserData），偏置器模板化支持任意 UserData
     using ArcType = tailor_visualization::Arc;
 
+    // 设置凸角偏置方式
+    int convexStyleIndex = m_joinConvexStyleCombo->currentData().toInt();
+    tailor_offset::CurveOffseter<ArcType, double>::s_joinConvexStyle =
+        (convexStyleIndex == 1)
+            ? tailor_offset::CurveOffseter<ArcType, double>::JoinConvexStyle::Extend
+            : (convexStyleIndex == 2)
+            ? tailor_offset::CurveOffseter<ArcType, double>::JoinConvexStyle::ExtendShape
+            : tailor_offset::CurveOffseter<ArcType, double>::JoinConvexStyle::Arc;
+
     // 注册偏置器回调：标记每条输出边的类型到 ArcUserData.edgeTag
     tailor_offset::CurveOffseter<ArcType, double>::s_onOffsetEdge = [](int, ArcType& curve) {
         curve.Data().edgeTag = 0;  // OffsetEdge
@@ -483,6 +504,10 @@ void FourViewContainer::processCurveOffset(double distance) {
                 resultPoly.edgeSegmentIds.append(arc.Data().segmentId);
                 resultPoly.edgeSourceEdgeIds.append(arc.Data().sourceEdgeId);
                 resultPoly.edgeTags.append(arc.Data().edgeTag);
+                resultPoly.edgeConvexJoinVertices.append(
+                    arc.Data().edgeTag == 1
+                        ? QPointF(arc.Data().convexJoinVertexX, arc.Data().convexJoinVertexY)
+                        : QPointF());
             }
             offsetResults.append(resultPoly);
         }
