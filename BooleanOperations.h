@@ -96,6 +96,15 @@ namespace tailor_visualization {
     inline std::vector<Arc> MergeAdjacentCurves(const std::vector<Arc>& arcs) {
         if (arcs.size() < 2) return arcs;
 
+        // 退化检测：合并后弧段首尾重合 -> 拒绝合并
+        // 解决多段线正反向曲线（A→B 和 B→A）被错误合并成 A→A 零长度弧段的问题
+        auto WouldBeDegenerate = [](const Arc& a, const Arc& b) {
+            using std::abs;
+            auto dx = a.Point0().x - b.Point1().x;
+            auto dy = a.Point0().y - b.Point1().y;
+            return abs(dx) < 1e-9 && abs(dy) < 1e-9;
+        };
+
         std::vector<Arc> result;
         Arc current = arcs[0];
 
@@ -107,7 +116,9 @@ namespace tailor_visualization {
             int nextTag = next.Data().edgeTag;
 
             // 相同有效ID、相同edgeTag且几何兼容 -> 合并
-            if (curId >= 0 && curId == nextId && curTag == nextTag && CanMergeTwoArcs(current, next)) {
+            if (curId >= 0 && curId == nextId && curTag == nextTag
+                && CanMergeTwoArcs(current, next)
+                && !WouldBeDegenerate(current, next)) {
                 current = MergeTwoArcs(current, next);
             } else {
                 result.push_back(current);
@@ -124,7 +135,9 @@ namespace tailor_visualization {
             int lastId = last.Data().segmentId;
             int firstTag = first.Data().edgeTag;
             int lastTag = last.Data().edgeTag;
-            if (firstId >= 0 && firstId == lastId && firstTag == lastTag && CanMergeTwoArcs(last, first)) {
+            if (firstId >= 0 && firstId == lastId && firstTag == lastTag
+                && CanMergeTwoArcs(last, first)
+                && !WouldBeDegenerate(last, first)) {
                 // 将尾部合并到头部（last→first），保持多边形闭合
                 result[0] = MergeTwoArcs(last, first);
                 result.pop_back();
@@ -282,7 +295,7 @@ namespace tailor_visualization {
     /**
      * @brief 环绕数大于0的 FillType (模板版本，用于 Pattern)
      */
-    using PositiveWindFillType = tailor::ConditionFillType2<tailor::GtSpecifiedWindCondition<0>>;
+    using PositiveWindFillType = tailor::ConditionFillType<tailor::GtSpecifiedWindCondition<0>>;
 
     /**
      * @brief 环绕数大于0的 FillType 具体实现 (运行时包装器)

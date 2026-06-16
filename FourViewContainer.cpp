@@ -27,6 +27,43 @@ static std::vector<tailor_visualization::Arc> polygonToArcs(
     return arcs;
 }
 
+// 辅助函数：将多段线转换为"零面积多边形"的弧段数组
+// 多段线本身是开放的，通过构建正反双向边序列模拟一个面积为零的闭合多边形。
+// 对于多段线 A→B→C→D，生成六段：AB, BC, CD（正向） + DC, CB, BA（反向）。
+// Tailor 算法原生支持处理此类零面积多边形结构，使偏置算法可直接复用。
+static std::vector<tailor_visualization::Arc> polylineToArcs(
+    const Sketch2DView::Polyline& poly, int& nextSegmentId) {
+    std::vector<tailor_visualization::Arc> arcs;
+    int n = poly.vertices.size();
+    if (n < 2) return arcs;
+
+    // 正向边：沿多段线方向 A→B, B→C, C→D
+    for (int i = 0; i < n - 1; ++i) {
+        const auto& v1 = poly.vertices[i];
+        const auto& v2 = poly.vertices[i + 1];
+        arcs.push_back(tailor_visualization::Arc(
+            tailor_visualization::ArcPoint{ v1.point.x(), v1.point.y() },
+            tailor_visualization::ArcPoint{ v2.point.x(), v2.point.y() },
+            v1.bulge,
+            tailor_visualization::ArcUserData(QRgba64(), nextSegmentId++)
+        ));
+    }
+
+    // 反向边：沿多段线反向 D→C, C→B, B→A（bulge 取反以表示反向弧）
+    for (int i = n - 1; i > 0; --i) {
+        const auto& v1 = poly.vertices[i];      // 反向起点（如 D）
+        const auto& v2 = poly.vertices[i - 1];  // 反向终点（如 C）
+        arcs.push_back(tailor_visualization::Arc(
+            tailor_visualization::ArcPoint{ v1.point.x(), v1.point.y() },
+            tailor_visualization::ArcPoint{ v2.point.x(), v2.point.y() },
+            -v2.bulge,  // 正向弧 bulge 存储在起点 v2，反向弧 bulge 取反
+            tailor_visualization::ArcUserData(QRgba64(), nextSegmentId++)
+        ));
+    }
+
+    return arcs;
+}
+
 // 辅助函数：将 Arc 数组转换为 Sketch2DView::OffsetResultPolygon（并携带 segmentId + sourceEdgeId + edgeTag + convexJoinVertex）
 static Sketch2DView::OffsetResultPolygon arcsToPolygon(
     const std::vector<tailor_visualization::Arc>& arcs,
@@ -341,9 +378,11 @@ void FourViewContainer::synchronizeViews() {
 
 void FourViewContainer::processSelfIntersection() {
     const auto& polygons = m_mainView->polygons();
-    qDebug() << "processSelfIntersection: polygons.size() =" << polygons.size();
-    if (polygons.isEmpty()) {
-        qDebug() << "无输入多边形";
+    const auto& polylines = m_mainView->polylines();
+    qDebug() << "processSelfIntersection: polygons.size() =" << polygons.size()
+             << "polylines.size() =" << polylines.size();
+    if (polygons.isEmpty() && polylines.isEmpty()) {
+        qDebug() << "无输入多边形或多段线";
         return;
     }
 
@@ -359,11 +398,16 @@ void FourViewContainer::processSelfIntersection() {
         QColor(150, 100, 255),   // 紫蓝
     };
 
-    // Step 1: 将所有曲线加入 tailor subject 集合，并为每条边分配唯一 ID
+    // Step 1: 将所有多边形和多段线加入 tailor subject 集合，并为每条边分配唯一 ID
     tailor_visualization::BooleanOperations boolOp;
     int nextSegmentId = 0;
     for (const auto& poly : polygons) {
         auto arcs = polygonToArcs(poly, nextSegmentId);
+        boolOp.AddSubjectPolygon(arcs);
+    }
+    // 多段线：构建零面积多边形（正反向边序列）并加入 subject 集合
+    for (const auto& poly : polylines) {
+        auto arcs = polylineToArcs(poly, nextSegmentId);
         boolOp.AddSubjectPolygon(arcs);
     }
 
@@ -379,7 +423,16 @@ void FourViewContainer::processSelfIntersection() {
     default: fillType = std::addressof(*new tailor_visualization::EvenOddFillTypeWrapper()); break;
     }
 
-    auto resultArcs = boolOp.ExecuteOnlySubjectPattern(fillType);
+    // 读取连接类型（内角优先 vs 外角优先）
+    using Drafting = typename tailor_visualization::ArcTailor::PatternDrafting;
+    tailor_visualization::ConnectTypeOuterFirstWrapper<Drafting> outerFirst;
+    tailor_visualization::ConnectTypeInnerFirstWrapper<Drafting> innerFirst;
+    const tailor_visualization::IConnectType<Drafting>* connectType =
+        (m_connectTypeCombo->currentData().toInt() == 1)
+        ? static_cast<const tailor_visualization::IConnectType<Drafting>*>(&innerFirst)
+        : static_cast<const tailor_visualization::IConnectType<Drafting>*>(&outerFirst);
+
+    auto resultArcs = boolOp.ExecuteOnlySubjectPattern(fillType, connectType);
     qDebug() << "processSelfIntersection: resultArcs.size() =" << resultArcs.size();
 
     // Step 2.5: 合并具有相同 segmentId 的相邻弧段，消除单调分割产生的小线段
@@ -539,7 +592,17 @@ void FourViewContainer::processDeselfIntersection() {
 
     // 使用"正"填充（环绕数 > 0）
     tailor_visualization::PositiveWindFillTypeWrapper fillType;
-    auto resultArcs = boolOp.ExecuteOnlySubjectPattern(&fillType);
+
+    // 读取连接类型（内角优先 vs 外角优先）
+    using Drafting = typename tailor_visualization::ArcTailor::PatternDrafting;
+    tailor_visualization::ConnectTypeOuterFirstWrapper<Drafting> outerFirst;
+    tailor_visualization::ConnectTypeInnerFirstWrapper<Drafting> innerFirst;
+    const tailor_visualization::IConnectType<Drafting>* connectType =
+        (m_connectTypeCombo->currentData().toInt() == 1)
+        ? static_cast<const tailor_visualization::IConnectType<Drafting>*>(&innerFirst)
+        : static_cast<const tailor_visualization::IConnectType<Drafting>*>(&outerFirst);
+
+    auto resultArcs = boolOp.ExecuteOnlySubjectPattern(&fillType, connectType);
 
     // 布尔运算后也做一次合并
     if constexpr (tailor_visualization::ENABLE_CURVE_MERGE) {

@@ -319,7 +319,6 @@ namespace tailor_visualization {
 
         // 将 IFillType 转换为 FillTypeVariant
         auto fillTypeVariant = ToFillTypeVariant(fillType);
-
         // 使用 std::visit 来选择正确的 Pattern，同时支持 ConnectType
         std::visit([&](auto&& type) {
             using FillType = std::decay_t<decltype(type)>;
